@@ -1,0 +1,9 @@
+sphinx_rtd_theme>=0.3.1
+sphinx>=2.0.1
+nbsphinx
+sphinx-autodoc-typehints
+nbsphinx-link
+ipython
+autodocsumm
+scanpydoc
+sphinx-automodapi
