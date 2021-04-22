@@ -38,7 +38,7 @@ class TreeDataset(GeneExpressionDataset):
     """
 
     def __init__(
-        self, expr: GeneExpressionDataset, tree=None,
+        self, expr: GeneExpressionDataset, tree=None, filtering=True
     ):
 
         if tree is not None and type(tree) == str:
@@ -64,7 +64,8 @@ class TreeDataset(GeneExpressionDataset):
 
         # keeping the cells in the tree and Gene expression dataset (not needed for simulations)
         # self.filter_cells_by_tree()
-        self.filter_cells_by_count()
+        if filtering:
+            self.filter_cells_by_count()
 
     def populate_treedataset(self, expr):
         """
