@@ -130,17 +130,13 @@ class TreePosterior(Posterior):
         lambda_ = 1
         elbo = 0
         for i_batch, tensors in enumerate(self):
-            sample_batch, local_l_mean, local_l_var, batch_index, labels = tensors[:5]
+            sample_batch, local_l_mean, local_l_var, _, _ = tensors[:5]
             reconst_loss, qz, mp_lik = vae.forward(
                 sample_batch,
                 local_l_mean,
                 local_l_var,
-                batch_index=batch_index,
-                barcodes=self.barcodes,
-                y=labels,
                 **kwargs
             )
-
             elbo += torch.sum(reconst_loss)
             elbo += lambda_ * torch.sum(qz)
             #elbo -= lambda_ * mp_lik
@@ -514,14 +510,12 @@ class TreeTrainer(Trainer):
         :return: Mean reconstruction loss.
         """
 
-        sample_batch, local_l_mean, local_l_var, batch_index, _ = tensors
+        sample_batch, local_l_mean, local_l_var, _, _ = tensors
 
         reconst_loss, qz, mp_lik = self.model.forward(
             x=sample_batch,
             local_l_mean=local_l_mean,
             local_l_var=local_l_var,
-            batch_index=batch_index,
-            barcodes=self.barcodes,
         )
 
         n_samples = len(self.train_set.indices)
