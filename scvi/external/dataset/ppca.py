@@ -4,12 +4,19 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sys
 import ete3
+import copy
+import pdb
+from anndata import AnnData
 import matplotlib
 matplotlib.use('TkAgg')
+
 sys.path.append('.')
 from scipy.stats import multivariate_normal
-import pdb
-from utils.precision_matrix import precision_matrix, marginalize_covariance, marginalize_internal
+from ..utils.precision_matrix import precision_matrix, marginalize_covariance, marginalize_internal
+from ..dataset.tree import TreeDataset, GeneExpressionDataset
+from ..models.treevae import TreeVAE
+from ..dataset.anndataset import AnnDatasetFromAnnData
+from ..utils.data_util import get_leaves, get_internal
 
 class PPCA:
     def __init__(self, tree, dim, latent, vis, only, branch_length, sigma_scale):
@@ -201,7 +208,7 @@ class PPCA:
         # Evidence x_L
         evidence_leaves = self.get_evidence_leaves_levelorder(X=self.X, dim=self.dim)
         # We want to compute the posterior of n1 condtioned on all the leaves
-        for i1, n1 in zip(indices, leaves):
+        for n1 in leaves:
             # Correlations between z_n and x_L
             corr_x_z = np.zeros(shape=(self.latent, self.n_leaves * self.dim))
             for i2, n2 in zip(indices, leaves):
@@ -223,11 +230,11 @@ class PPCA:
         corr_x_z = np.zeros(shape=(self.n_leaves * self.latent, self.n_leaves * self.dim))
         for i1, n1 in zip(indices, leaves):
             for i2, n2 in zip(indices, leaves):
-                sigma_n1_n2 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=n2.index)
+                sigma_n1_n2 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=n2.index)    
                 corr_x_z[i1 * self.latent : i1 * self.latent + self.latent, i2 * self.dim : i2 * self.dim + self.dim] = sigma_n1_n2 @ self.W.T
         posterior_mean = corr_x_z @ self.leaves_covariance_inv @ evidence_leaves
         posterior_cov = self.leaves_covariance_z - corr_x_z @ self.leaves_covariance_inv @ corr_x_z.T
-
+        return posterior_mean, posterior_cov
 
     def compute_posterior_predictive(self):
         predictive_mean, predictive_cov = {}, {}
@@ -243,11 +250,102 @@ class PPCA:
             for i2, n2 in zip(indices, leaves):
                 sigma_n1_n2 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=n2.index)
                 corr_x_x[:, i2 * self.dim : i2 * self.dim + self.dim] = self.W @ sigma_n1_n2 @ self.W.T + self.sigma
-            # compute posterior mean and covariance
+            # compute posterior predictive mean and covariance
             sigma_n1 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=None)
             predictive_mean[n1.name] = corr_x_x @ self.leaves_covariance_inv @ evidence_leaves
             predictive_cov[n1.name] = self.W @ sigma_n1 @ self.W.T - corr_x_x @ self.leaves_covariance_inv @ corr_x_x.T
         return predictive_mean, predictive_cov
+
+    def compute_posterior_predictive_z(self, evidence):
+        predictive_mean_z, predictive_cov_z = {}, {}
+        leaves = [n for n in self.tree.traverse('levelorder') if n.is_leaf()]
+        internal_nodes = [n for n in self.tree.traverse('levelorder') if not n.is_leaf()]
+        indices = list(range(self.n_leaves))
+        # evidence z_L
+        for n1 in internal_nodes:
+            corr_z_z = np.zeros(shape=(self.latent, self.n_leaves * self.latent))
+            for i2, n2 in zip(indices, leaves):
+                sigma_n1_n2 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=n2.index)                                                                                                 
+                corr_z_z[:, i2 * self.latent : i2 * self.latent + self.latent] = sigma_n1_n2
+            # compute posterior predictive mean and covariance (in z space)
+            sigma_n1 = self.query_marginalized_covariance_z(idx1=n1.index, idx2=None)
+            predictive_mean_z[n1.name] = corr_z_z @ np.linalg.inv(self.leaves_covariance_z) @ evidence
+            predictive_cov_z[n1.name] = sigma_n1 - corr_z_z @ np.linalg.inv(self.leaves_covariance_z) @ corr_z_z.T
+        return predictive_mean_z, predictive_cov_z
+
+    def compute_posterior_predictive_z_MP(self, evidence):
+        #FIXED training set
+        leaves = [n for n in self.tree.traverse('levelorder') if n.is_leaf()]
+        leaves_X, _, _ = get_leaves(self.X, self.mu, self.tree)
+        adata = AnnData(leaves_X)
+        gene_dataset = AnnDatasetFromAnnData(ad=adata,
+                                            filtering=False)
+        barcodes = [l.name for l in leaves]
+        gene_dataset.initialize_cell_attribute('barcodes', barcodes)
+
+        #create tree dataset
+        cas_dataset = TreeDataset(gene_dataset, tree=self.tree, filtering=False)
+        use_batches = False
+        treevae = TreeVAE(cas_dataset.nb_genes,
+                    tree=cas_dataset.tree,
+                    n_batch=cas_dataset.n_batches * use_batches,
+                    n_latent=self.latent,
+                    prior_t=self.branch_length
+                    )
+        predictive_mean_z, predictive_cov_z = {}, {}
+        for n in self.tree.traverse('levelorder'):
+            if not n.is_leaf():
+                query_node = n.name
+                treevae.initialize_visit()
+                treevae.initialize_messages(
+                    evidence,
+                    cas_dataset.barcodes,
+                    self.latent)
+
+                treevae.perform_message_passing((treevae.tree & query_node), self.latent, True)
+                
+                predictive_mean_z[n.name] = (treevae.tree & query_node).mu.numpy()
+                predictive_cov_z[n.name] = (treevae.tree & query_node).nu * np.identity(self.latent)
+        return predictive_mean_z, predictive_cov_z
+
+    def compute_approx_posterior_predictive(self, mean_field=False, use_MP=False, sample_size=100):
+        # Sample the evidence from posterior
+        if not mean_field:
+            posterior_mean, posterior_cov = self.compute_correlated_posterior()
+            samples_z = np.array([np.random.multivariate_normal(mean=posterior_mean,
+                                                    cov=posterior_cov).reshape(-1, self.latent) for i in range(sample_size)])
+            evidence_z = np.mean(samples_z, axis=0)
+        else:
+            posterior_mean, posterior_cov = self.compute_posterior()
+            evidence_z = []
+            for k in list(posterior_mean.keys()):
+                samples_z = np.array([np.random.multivariate_normal(mean=posterior_mean[k], cov=posterior_cov[k]) for i in range(sample_size)])
+                evidence_z.append(np.mean(samples_z, axis=0))
+            evidence_z = np.array(evidence_z)
+        # sample internal latent state
+        if not use_MP: 
+            predictive_mean_z, predictive_cov_z = self.compute_posterior_predictive_z(evidence=evidence_z.flatten())
+        else:
+            predictive_mean_z, predictive_cov_z = self.compute_posterior_predictive_z_MP(evidence=evidence_z)
+        # Apply generative model
+        imputed_z_mp = {}
+        imputed_mp = {}
+        for n in self.tree.traverse('levelorder'):
+            if not n.is_leaf():
+                samples_z = np.array([np.random.multivariate_normal(mean=predictive_mean_z[n.name],
+                                            cov=predictive_cov_z[n.name]) for i in range(sample_size)])
+                imputed_z_mp[n.name] = np.mean(samples_z, axis=0)
+                
+                samples_x = np.array([np.random.multivariate_normal(mean=self.W @ imputed_z_mp[n.name],
+                                            cov=self.sigma) for i in range(20)])  
+                imputed_mp[n.name] = np.mean(samples_x, axis=0)
+        return imputed_mp, imputed_z_mp
+
+
+
+
+
+
 
         
 
