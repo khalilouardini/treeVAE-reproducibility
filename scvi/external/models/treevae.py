@@ -5,20 +5,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
-from scvi.models.modules import LinearDecoderSCVI
-from scvi.models.utils import one_hot
+from ..models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
+from ..models.utils import one_hot
 from scvi.models.vae import VAE
 import pdb
 import time
 import numpy as np
-from torch.distributions import Normal, Poisson, kl_divergence as kl
+from torch.distributions import Normal, Poisson, NegativeBinomial 
+from torch.distributions import kl_divergence as kl
 
 torch.backends.cudnn.benchmark = True
 
 from ete3 import Tree
 
 # TreeVAE Model
-class TreeVAE(VAE):
+class TreeVAE(nn.Module):
     r"""Model class for fitting a VAE to scRNA-seq data with a tree prior.
 
     This is corresponding VAE class for our TreeTrainer & implements the TreeVAE model. This model
@@ -33,50 +34,69 @@ class TreeVAE(VAE):
     into train/test/validation and in each iteration sample a single cell from the appropriate list and assign its
     RNAseq profile to the clade's root (i.e., the leaf in the clusterd subtree).
 
-    There are a couple of items to clean up here:
-
-    TODO:
-        - Find a more ideal way to cluster cells together into clades (currently, we're just
-         using depth = 3 as the clustering rule)
-        - Ensure that all math here is correct.
-        - Implement the ability to sample from the posterior distribution (this is necessary for
-        inferring ancestral, or unobserved, transcriptomic profiles)
-
 	"""
 
     def __init__(
         self,
         n_input: int,
-        n_batch: int = 0,
         n_labels: int = 0,
         n_hidden: int = 128,
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         dispersion: str = "gene",
-        log_variational: bool = True,
         reconstruction_loss: str = "nb",
+        latent_distribution: str = "normal",
         tree: Tree = None,
-        use_clades: bool = None,
+        use_clades: bool = False,
         prior_t: dict or float = None,
-        ldvae: bool = False
+        ldvae: bool = False,
+        use_MP: bool = True
     ):
 
-        super().__init__(
+        super().__init__()
+        self.use_MP = use_MP
+        self.dispersion = dispersion
+        self.n_latent = n_latent
+        self.reconstruction_loss = reconstruction_loss
+        self.n_labels = n_labels
+        self.latent_distribution = latent_distribution
+
+        if self.dispersion == "gene":
+            self.px_r = torch.nn.Parameter(torch.randn(n_input))
+
+        # z encoder goes from the n_input-dimensional data to an n_latent-d latent space representation
+        self.z_encoder = Encoder(
             n_input,
-            n_batch,
-            n_labels,
-            n_hidden,
             n_latent,
-            n_layers,
-            dropout_rate,
-            dispersion,
-            log_variational,
-            reconstruction_loss
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            distribution=latent_distribution,
         )
 
-        def cut_tree(node, distance):
+        # decoder goes from n_latent-dimensional space to n_input-d data
+        if not ldvae:
+            self.decoder = Decoder(
+                n_latent,
+                n_input,
+                n_cat_list=[0],
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+            )
+        else:
+            # linearly decoded VAE
+            if ldvae:
+                print("==== We will use a linear decoder ===")
+                self.decoder = LinearDecoder(
+                    n_input=n_latent,
+                    n_output=n_input,
+                    n_cat_list=[0],
+                    use_batch_norm=False,
+                    bias=True
+                )
 
+        def cut_tree(node, distance):
             return node.distance == distance
 
         self.use_clades = use_clades
@@ -89,8 +109,6 @@ class TreeVAE(VAE):
             self.root = collapsed_tree.name
             inf_tree = Tree("prior_root;")
             inf_tree.add_child(collapsed_tree)
-
-
         else:
             # No collapsing for simulations (and small trees)
             for l in tree.get_leaves():
@@ -106,7 +124,7 @@ class TreeVAE(VAE):
         # leaves barcodes
         self.barcodes = [l.name for l in self.tree.get_leaves()]
 
-        # branch length for MP
+        # branch length for Message Passing
         if not prior_t:
             prior_t = 1.0
         if type(prior_t) == float:
@@ -117,20 +135,8 @@ class TreeVAE(VAE):
         else:
             self.prior_t = prior_t
 
-        # linearly decoded VAE
-        if ldvae:
-            print("==== We will use a linear decoder ===")
-            self.decoder = LinearDecoderSCVI(
-                n_input=n_latent,
-                n_output=n_input,
-                n_cat_list=[n_batch],
-                use_batch_norm=False,
-                bias=True
-            )
-
         # encoder's variance
         self.encoder_variance = []
-        self.expected_ge = []
 
     def initialize_messages(self, evidence, barcodes, d):
 
@@ -147,7 +153,7 @@ class TreeVAE(VAE):
             dic_mu[barcodes[i]] = j
 
         dic_nu[self.prior_root] = 0
-        dic_mu[self.prior_root] = torch.from_numpy(np.zeros(d)).type(torch.DoubleTensor)
+        dic_mu[self.prior_root] = torch.zeros(d)
         dic_log_z[self.prior_root] = 0
 
         for n in self.tree.traverse('levelorder'):
@@ -165,13 +171,11 @@ class TreeVAE(VAE):
                 )
 
     def initialize_visit(self):
-
         for node in self.tree.traverse():
             node.add_features(visited=False)
 
     def perform_message_passing(self, root_node, d, include_prior):
         # flag the node as visited
-
         prior_node = self.tree & self.prior_root
         root_node.visited = True
 
@@ -284,13 +288,8 @@ class TreeVAE(VAE):
                 Z_3 *= -0.5 / t
             root_node.log_z = Z_1 + Z_2 + Z_3
 
-        else:
-            # Here there is a problem, we might have tried to compute something weird
-            raise NotImplementedError("This should not happen (more than 3). Node" + str(root_node))
-
     def aggregate_messages_into_leaves_likelihood(self, d, add_prior):
         res = 0
-
         root_node = self.tree & self.root
 
         # agg Z messages
@@ -303,7 +302,6 @@ class TreeVAE(VAE):
             res += -0.5 * torch.sum(root_node.mu ** 2) / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
 
         return res
-
 
     def posterior_predictive_density(self, query_node, evidence=None):
         """
@@ -324,95 +322,46 @@ class TreeVAE(VAE):
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
-    def get_reconstruction_loss(
-        self, x, px_rate, px_r, px_dropout, **kwargs
-    ) -> torch.Tensor:
-        # Reconstruction Loss
-        if self.reconstruction_loss == "zinb":
-            reconst_loss = (
-                -ZeroInflatedNegativeBinomial(
-                    mu=px_rate, theta=px_r, zi_logits=px_dropout
-                )
-                .log_prob(x)
-                .sum(dim=-1)
-            )
-        elif self.reconstruction_loss == "nb":
-            reconst_loss = (
-                -NegativeBinomial(mu=px_rate, theta=px_r).log_prob(x).sum(dim=-1)
-            )
-        elif self.reconstruction_loss == "poisson":
-            reconst_loss = -Poisson(px_rate).log_prob(x).sum(dim=-1)
-        #elif self.reconstruction_loss == "normal":
-        #    reconst_loss = -Normal
-        return reconst_loss
-
     def inference(
-        self, x, batch_index=None, y=None, n_samples=1, transform_batch=None
+        self, x, n_samples=1
     ):
         """Helper function used in forward pass
                 """
-
         x_ = x
-        if self.log_variational:
-            x_ = torch.log(1 + x_)
+        x_ = torch.log(1 + x_)
 
         # Sampling
-        qz_m, qz_v, z = self.z_encoder(x_, y)
-
-        # we consider the library size fixed
-        ql_m, ql_v, library = self.l_encoder(x_)
+        qz_m, qz_v, z = self.z_encoder(x=x_)
 
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
             qz_v = qz_v.unsqueeze(0).expand((n_samples, qz_v.size(0), qz_v.size(1)))
             # when z is normal, untran_z == z
-            untran_z = Normal(qz_m, qz_v.sqrt()).sample()
-            z = self.z_encoder.z_transformation(untran_z)
-            ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
-            ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
-            library = Normal(ql_m, ql_v.sqrt()).sample()
-
-        if transform_batch is not None:
-            dec_batch_index = transform_batch * torch.ones_like(batch_index)
-        ## WARNING ##
-        else:
-            dec_batch_index = batch_index
+            z = Normal(qz_m, qz_v.sqrt()).sample()
 
         # Library size fixed
-        library = torch.log(x.sum(dim=1,
-                        dtype=torch.float64
-                        )).view(-1, 1)
+        total_counts = x.sum(dim=1, dtype=torch.float64)
+        library = torch.log(total_counts).view(-1, 1)
 
-        px_scale, px_r, px_rate, px_dropout = self.decoder(
-            self.dispersion, z, library, dec_batch_index, y
+        px_scale, px_rate, px_r = self.decoder(
+            self.dispersion, z, library, None, None
         )
 
-        if self.dispersion == "gene-label":
-            px_r = F.linear(
-                one_hot(y, self.n_labels), self.px_r
-            )  # px_r gets transposed - last dimension is nb genes
-        elif self.dispersion == "gene-batch":
-            px_r = F.linear(one_hot(dec_batch_index, self.n_batch), self.px_r)
-        elif self.dispersion == "gene":
-            px_r = self.px_r
-        px_r = torch.exp(px_r)
+        if self.dispersion == "gene":
+            px_r = torch.exp(self.px_r)
 
         return dict(
             px_scale=px_scale,
             px_r=px_r,
             px_rate=px_rate,
-            px_dropout=px_dropout,
             qz_m=qz_m,
             qz_v=qz_v,
             z=z,
-            ql_m=ql_m,
-            ql_v=ql_v,
             library=library,
         )
 
-
     def forward(
-        self, x, local_l_mean, local_l_var, batch_index=None, y=None, barcodes=None
+        self, x, local_l_mean, local_l_var
     ):
         r""" Returns the reconstruction loss
 
@@ -421,50 +370,42 @@ class TreeVAE(VAE):
 		 with shape (batch_size, 1)
 		:param local_l_var: tensor of variancess of the prior distribution of latent variable l
 		 with shape (batch_size, 1)
-		:param batch_index: array that indicates which batch the cells belong to with shape ``batch_size``
 		:param y: tensor of cell-types labels with shape (batch_size, n_labels)
 		:return: the reconstruction loss and the Kullback divergences
 		:rtype: 2-tuple of :py:class:`torch.FloatTensor`
 		"""
         # Parameters for z latent distribution
-        outputs = self.inference(x, batch_index, y)
-
+        outputs = self.inference(x)
         qz_m = outputs["qz_m"]
         qz_v = outputs["qz_v"]
-        ql_m = outputs["ql_m"]
-        ql_v = outputs["ql_v"]
         px_rate = outputs["px_rate"]
         px_r = outputs["px_r"]
-        px_dropout = outputs["px_dropout"]
         z = outputs["z"]
         library = outputs["library"]
 
         self.encoder_variance.append(np.linalg.norm(qz_v.detach().numpy(), axis=1))
-        self.expected_ge.append((outputs["px_scale"].detach().numpy()))
-
-        # Message passing likelihood
-        #self.initialize_visit()
-        #self.initialize_messages(z, self.barcodes, self.n_latent)
-        #self.perform_message_passing((self.tree & self.root), z.shape[1], False)
-        #mp_lik = self.aggregate_messages_into_leaves_likelihood(z.shape[1], add_prior=True)
-        mp_lik = None
-        ##################################
-
-        #qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
-
-        #scVI
-        mean = torch.zeros_like(qz_m)
-        scale = torch.ones_like(qz_v)
-
-        qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
-
-        # library size likelihood
-        #kl_divergence_l = kl(Normal(ql_m, torch.sqrt(ql_v)),
-                             #Normal(local_l_mean, torch.sqrt(local_l_var))).sum(
-            #dim=1)
-
-        reconst_loss = (
-            self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
-        )
+        
+        if self.use_MP:
+            # Message passing likelihood
+            self.initialize_visit()
+            self.initialize_messages(z, self.barcodes, self.n_latent)
+            self.perform_message_passing((self.tree & self.root), z.shape[1], False)
+            mp_lik = self.aggregate_messages_into_leaves_likelihood(z.shape[1], add_prior=True)
+            # Gaussian variational likelihood
+            qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
+        else:
+            mp_lik = None
+            # scVI Kl Divergence
+            mean = torch.zeros_like(qz_m)
+            scale = torch.ones_like(qz_v)
+            qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
+        
+        # Reconstruction Loss
+        if self.reconstruction_loss == "nb":
+            reconst_loss = (
+                -NegativeBinomial(mu=px_rate, theta=px_r).log_prob(x).sum(dim=-1)
+            )
+        elif self.reconstruction_loss == "poisson":
+            reconst_loss = -Poisson(px_rate).log_prob(x).sum(dim=-1)
 
         return reconst_loss, qz, mp_lik
