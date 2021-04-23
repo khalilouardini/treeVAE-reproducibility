@@ -51,6 +51,7 @@ class TreeVAE(nn.Module):
         use_clades: bool = False,
         prior_t: dict or float = None,
         ldvae: bool = False
+        use_MP: bool = True
     ):
 
         super().__init__()
@@ -358,24 +359,15 @@ class TreeVAE(nn.Module):
         # Sampling
         qz_m, qz_v, z = self.z_encoder(x=x_)
 
-        # we consider the library size fixed
-        ql_m, ql_v, library = self.l_encoder(x_)
-
         if n_samples > 1:
             qz_m = qz_m.unsqueeze(0).expand((n_samples, qz_m.size(0), qz_m.size(1)))
             qz_v = qz_v.unsqueeze(0).expand((n_samples, qz_v.size(0), qz_v.size(1)))
             # when z is normal, untran_z == z
-            untran_z = Normal(qz_m, qz_v.sqrt()).sample()
-            z = self.z_encoder.z_transformation(untran_z)
-            ql_m = ql_m.unsqueeze(0).expand((n_samples, ql_m.size(0), ql_m.size(1)))
-            ql_v = ql_v.unsqueeze(0).expand((n_samples, ql_v.size(0), ql_v.size(1)))
-            library = Normal(ql_m, ql_v.sqrt()).sample()
-
+            z = Normal(qz_m, qz_v.sqrt()).sample()
 
         # Library size fixed
-        library = torch.log(x.sum(dim=1,
-                        dtype=torch.float64
-                        )).view(-1, 1)
+        total_counts = x.sum(dim=1, dtype=torch.float64)
+        library = torch.log(total_counts).view(-1, 1)
 
         px_scale, px_r, px_rate, px_dropout = self.decoder(
             self.dispersion, z, library, None, None
@@ -393,8 +385,6 @@ class TreeVAE(nn.Module):
             qz_m=qz_m,
             qz_v=qz_v,
             z=z,
-            ql_m=ql_m,
-            ql_v=ql_v,
             library=library,
         )
 
@@ -418,8 +408,6 @@ class TreeVAE(nn.Module):
 
         qz_m = outputs["qz_m"]
         qz_v = outputs["qz_v"]
-        ql_m = outputs["ql_m"]
-        ql_v = outputs["ql_v"]
         px_rate = outputs["px_rate"]
         px_r = outputs["px_r"]
         px_dropout = outputs["px_dropout"]
@@ -444,11 +432,6 @@ class TreeVAE(nn.Module):
         scale = torch.ones_like(qz_v)
 
         qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
-
-        # library size likelihood
-        #kl_divergence_l = kl(Normal(ql_m, torch.sqrt(ql_v)),
-                             #Normal(local_l_mean, torch.sqrt(local_l_var))).sum(
-            #dim=1)
 
         reconst_loss = (
             self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)
