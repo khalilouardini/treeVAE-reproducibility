@@ -2,7 +2,6 @@ import logging
 import random
 import sys
 import time
-import pdb
 
 from abc import abstractmethod
 from collections import defaultdict, OrderedDict
@@ -26,7 +25,7 @@ from scvi.dataset.tree import TreeDataset
 from scvi.inference import Trainer
 from scvi.inference.posterior import Posterior
 from scvi.models.treevae import TreeVAE
-from torch.distributions import Poisson, Gamma, Bernoulli, Normal
+from torch.distributions import Poisson, Gamma, Bernoulli, Normal, NegativeBinomial
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,6 @@ class SequentialCladeSampler(SubsetRandomSampler):
     def __iter__(self):
         # randomly draw a cell from each clade (i.e. bunch of leaves)
         return iter([np.random.choice(l) for l in self.clades if len(l) > 0])
-
 
 
 
@@ -139,7 +137,7 @@ class TreePosterior(Posterior):
             )
             elbo += torch.sum(reconst_loss)
             elbo += lambda_ * torch.sum(qz)
-            #elbo -= lambda_ * mp_lik
+            elbo -= lambda_ * mp_lik
 
         n_samples = len(self.barcodes)
         elbo /= n_samples
@@ -278,36 +276,19 @@ class TreePosterior(Posterior):
             )
             px_r = outputs["px_r"]
             px_rate = outputs["px_rate"]
-            px_dropout = outputs["px_dropout"]
 
             if self.model.reconstruction_loss == "poisson":
                 l_train = px_rate
                 l_train = torch.clamp(l_train, max=1e8)
-                #print(l_train)
-                dist = distributions.Poisson(
-                    l_train
-                )  # Shape : (n_samples, n_cells_batch, n_genes)
+                dist = distributions.Poisson(l_train)  # Shape : (n_samples, n_cells_batch, n_genes)
             elif self.model.reconstruction_loss == "nb":
                 dist = distributions.NegativeBinomial(mu=px_rate, theta=px_r)
-            elif self.model.reconstruction_loss == "zinb":
-                dist = distributions.ZeroInflatedNegativeBinomial(
-                    mu=px_rate, theta=px_r, zi_logits=px_dropout
-                )
             else:
-                raise ValueError(
-                    "{} reconstruction error not handled right now".format(
-                        self.model.reconstruction_loss
-                    )
-                )
-            gene_expressions = dist.sample().permute(
-                [1, 2, 0]
-            )  # Shape : (n_cells_batch, n_genes, n_samples)
+                raise ValueError("{} reconstruction error not handled right now".format(self.model.reconstruction_loss))
+            gene_expressions = dist.sample().permute([1, 2, 0])  # Shape : (n_cells_batch, n_genes, n_samples)
 
             x_old.append(sample_batch.cpu())
             x_new.append(gene_expressions.cpu())
-
-            #import pdb
-            #pdb.set_trace()
 
         x_old = torch.cat(x_old)  # Shape (n_cells, n_genes)
         x_new = torch.cat(x_new)  # Shape (n_cells, n_genes, n_samples)
@@ -319,7 +300,8 @@ class TreePosterior(Posterior):
         libraries = []
         for tensors in self:
             x, local_l_mean, local_l_var, batch_index, y = tensors
-            library = self.model.inference(x, batch_index, y)["library"]
+            total_counts = x.sum(dim=1, dtype=torch.float64)
+            library = torch.log(total_counts).view(-1, 1)
             libraries += [np.array(library.cpu())]
         libraries = np.concatenate(libraries)
         return libraries.ravel()
@@ -391,12 +373,14 @@ class TreePosterior(Posterior):
             dispersion = torch.exp(self.model.px_r)
 
         # Sampling from NB
-        #p = px_rate / (px_rate + dispersion)
-        #l_train2 = Gamma(dispersion, (1 - p) / p).sample()
-
-        l_train = torch.clamp(px_rate, max=1e8)
-
-        data = Poisson(l_train).sample().cpu().numpy()[0]
+        if self.model.reconstruction_loss == "nb":
+            p = px_rate / (px_rate + dispersion)
+            l_train = Gamma(dispersion, (1 - p) / p).sample()
+            data = NegativeBinomial(mu=px_rate, theta=px_r).sample().cpu().numpy()[0]
+        # Sampling from Poisson
+        if self.model.reconstruction_loss == "poisson":
+            l_train = torch.clamp(px_rate, max=1e8)
+            data = Poisson(l_train).sample().cpu().numpy()[0]
 
         if empirical_var:
             samples = np.array([Poisson(l_train).sample().cpu().numpy().flatten() for i in range(1000)])
@@ -428,7 +412,6 @@ class TreePosterior(Posterior):
         qz_v = np.var(latent,
                        axis=0,
                        dtype=np.float64)
-
 
         if norm:
             norm_qz_v = [np.linalg.norm(v) for v in qz_v]
@@ -520,27 +503,25 @@ class TreeTrainer(Trainer):
 
         n_samples = len(self.train_set.indices)
 
-        #pdb.set_trace()
-
         loss_1 = torch.mean(reconst_loss) * n_samples
         self.history_train['Reconstruction'].append(loss_1.item() / n_samples)
 
         loss_2 = torch.mean(qz) * n_samples
-        #self.history_train['Gaussian pdf'].append(loss_2.item() / n_samples)
+        self.history_train['Gaussian pdf'].append(loss_2.item() / n_samples)
 
-        #loss_3 = -1 * mp_lik
-        #self.history_train['MP_lik'].append(loss_3.item() / n_samples)
+        if mp_lik:
+            loss_3 = -1 * mp_lik
+            self.history_train['MP_lik'].append(loss_3.item() / n_samples)
 
-        self.history_train['elbo'].append( (loss_1.item() + loss_2.item() ) / n_samples)        #+ loss_3.item()) / n_samples)
-        self.history_train['ratio'].append( loss_1.item() / self.lambda_ * self.kl_weight * loss_2.item() )
-        self.history_train['elbo_weighted'].append( ( loss_1.item() + (self.lambda_ * self.kl_weight * loss_2.item() ) ) / n_samples ) #+ (self.lambda_ * self.kl_weight * loss_3.item())) / n_samples)
+        self.history_train['elbo'].append((loss_1.item() + loss_2.item() + loss_3.item()) / n_samples)
+        self.history_train['ratio'].append(loss_1.item() / self.lambda_ * self.kl_weight * loss_2.item())
+        self.history_train['elbo_weighted'].append( ( loss_1.item() + (self.lambda_ * self.kl_weight * (loss_2.item() + loss_3.item()) ) ) / n_samples )
 
-        #print("Encodings MP Likelihood: {}".format(self.history_train['MP_lik'][-1]))
+        print("Encodings MP Likelihood: {}".format(self.history_train['MP_lik'][-1]))
         print("ELBO Loss: {}".format(self.history_train['elbo'][-1]))
-        #print("KL divergence: {}".format(self.history_train['Gaussian pdf'][-1]))
-        #return (loss_1 + (self.kl_weight * self.lambda_ * loss_2) + (self.lambda_ * self.kl_weight * loss_3)) / n_samples
+        print("Varitional Likelihood: {}".format(self.history_train['Gaussian pdf'][-1]))
 
-        return (loss_1 + (self.kl_weight * self.lambda_ * loss_2)) / n_samples
+        return (loss_1 + (self.kl_weight * self.lambda_ * loss_2) + (self.lambda_ * self.kl_weight * loss_3)) / n_samples
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:
