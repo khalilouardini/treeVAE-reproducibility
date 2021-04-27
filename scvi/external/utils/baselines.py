@@ -1,7 +1,7 @@
 from ete3 import Tree
 import numpy as np
 import torch
-from torch.distributions import Poisson
+from torch.distributions import Poisson, Normal
 
 def avg_weighted_baseline(tree, weighted, X, rounding):
     """
@@ -23,6 +23,8 @@ def avg_weighted_baseline(tree, weighted, X, rounding):
                     mean_ge += X[l.index]
                 else:
                     raise ValueError("Negative branch length value detected in the tree")
+            else:
+                mean_ge += X[l.index]
         if rounding:
             imputed[n.name] = np.round(mean_ge / len(sub_leaves))
         else:
@@ -113,7 +115,9 @@ def scvi_baseline_z(tree,
                     model,
                     weighted=True,
                     n_samples_z=None,
-                    library_size=10000):
+                    library_size=10000,
+                    gaussian=True
+                    ):
     """
     :param tree: ete3 phylogenetic tree
     :param posterior: scVI posterior object
@@ -128,7 +132,7 @@ def scvi_baseline_z(tree,
     imputed_z = {}
 
     # Posterior
-    latents = np.array([posterior.get_latent()[0] for i in range(n_samples_z)])
+    latents = np.array([posterior.get_latent(give_mean=False)[0] for i in range(n_samples_z)])
     D = latents[0].shape[1]
 
     # Initialize
@@ -163,17 +167,18 @@ def scvi_baseline_z(tree,
 
             # Decoding the averaged latent vector
             with torch.no_grad():
-                px_scale, px_r, px_rate, px_dropout = posterior.model.decoder.forward(model.dispersion,
-                                                                                 torch.from_numpy(mean_z).float(),
-                                                                                 torch.from_numpy(
-                                                                                     np.array([np.log(library_size)])),
-                                                                                 0)
-
-            l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
-
-            data = Poisson(l_train).sample().cpu().numpy()
-
-            imputed[n.name] = data
+                if not gaussian:
+                    px_scale, px_r, px_rate, px_dropout = posterior.model.decoder.forward(model.dispersion,
+                                                                                    torch.from_numpy(mean_z).float(),
+                                                                                    torch.from_numpy(
+                                                                                        np.array([np.log(library_size)])),
+                                                                                    0)
+                    l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+                    data = Poisson(l_train).sample().cpu().numpy()
+                    imputed[n.name] = data
+                else:
+                    p_m, p_v = posterior.model.decoder(torch.from_numpy(mean_z).float())                                                               
+                    imputed[n.name] = Normal(p_m, p_v.sqrt()).sample().cpu().numpy()
 
     return imputed, imputed_z
 
