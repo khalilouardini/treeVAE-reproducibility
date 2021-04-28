@@ -348,17 +348,17 @@ class GaussianDecoder(nn.Module):
         p_v = torch.exp(self.var_decoder(p)) + 1e-4
         return p_m, p_v
 
-class GaussianLinearDecoder(nn.Module, sigma):
+class GaussianLinearDecoder(nn.Module):
     def __init__(
         self,
         n_input: int,
         n_output: int,
         use_batch_norm: bool = True,
         bias: bool = False,
-        sigma: float = sigma
+        sigma: float = 1.0
     ):
         super().__init__()
-
+        self.sigma = sigma
         self.factor_regressor = FCLayers(
             n_in=n_input,
             n_out=n_output,
@@ -374,7 +374,6 @@ class GaussianLinearDecoder(nn.Module, sigma):
     ):
         # Mean of Normal
         p_m = self.factor_regressor(z)
-        p_v = self.sigma * torch.ones(size=)
-        px_rate = torch.exp(library) * px_scale
+        p_v = self.sigma * torch.ones_like(p_m)
 
-        return px_scale, px_rate, None
+        return p_m, p_v

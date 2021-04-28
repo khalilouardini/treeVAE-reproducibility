@@ -6,112 +6,10 @@ from inference.posterior import Posterior
 from ..models.gaussian_vae import GaussianVAE
 from ..dataset.tree import GeneExpressionDataset
 import torch
+import numpy as np
 logger = logging.getLogger(__name__)
 
 plt.switch_backend("agg")
-
-
-class GaussianTrainer(Trainer):
-    r"""The VariationalInference class for the unsupervised training of an autoencoder
-    with a latent tree structure.
-
-	Args:
-		:model: A model instance from class ``GaussianVAE``
-		:gene_dataset: A Gene Expression Dataset
-		:train_size: The train size, either a float between 0 and 1 or an integer for the number of training samples
-		 to use Default: ``0.8``.
-		:test_size: The test size, either a float between 0 and 1 or an integer for the number of training samples
-		 to use Default: ``None``, which is equivalent to data not in the train set. If ``train_size`` and ``test_size``
-		 do not add to 1 or the length of the dataset then the remaining samples are added to a ``validation_set``.
-		:n_epochs_kl_warmup: Number of epochs for linear warmup of KL(q(z|x)||p(z)) term. After `n_epochs_kl_warmup`,
-			the training objective is the ELBO. This might be used to prevent inactivity of latent units, and/or to
-			improve clustering of latent space, as a long warmup turns the model into something more of an autoencoder.
-		:\*\*kwargs: Other keywords arguments from the general Trainer class.
-
-	Examples:
-		>>> gene_dataset = GeneExpressionDataset(X)
-        >>> vae = GaussianVAE(gene_dataset.nb_genes)
-        ... n_batch=tree_dataset.n_batches * use_batches, use_cuda=True)
-        >>> trainer = GaussianTrainer(vae, tree_dataset)
-        >>> trainer.train(n_epochs=400)
-	"""
-    default_metrics_to_monitor = ["elbo"]
-
-    def __init__(
-        self,
-        model,
-        gene_dataset,
-        lambda_ = 1.0,
-        train_size=0.8,
-        test_size=None,
-        n_epochs_kl_warmup=100,
-        **kwargs
-    ):
-
-        train_size = float(train_size)
-        if train_size > 1.0 or train_size <= 0.0:
-            raise ValueError(
-                "train_size needs to be greater than 0 and less than or equal to 1"
-            )
-        super().__init__(model, gene_dataset, **kwargs)
-
-        # Set up number of warmup iterations
-        self.n_epochs_kl_warmup = n_epochs_kl_warmup
-        self.normalize_loss = True
-
-        # Total size of the dataset used for training
-        self.n_samples = 1.0
-
-        self.train_set, self.test_set, self.validation_set =  self.train_test_validation(model=model,
-                                                                                         gene_dataset=gene_dataset,
-                                                                                         train_size=train_size,
-                                                                                         test_size=test_size,
-                                                                                         type_class=GaussianPosterior
-                                                                                         )
-            
-        self.train_set.to_monitor = ["elbo"]
-        self.test_set.to_monitor = ["elbo"]
-        self.validation_set.to_monitor = ["elbo"]
-        self.n_samples = len(self.train_set.indices)
-
-    @property
-    def posteriors_loop(self):
-        return ["train_set"]
-
-    def loss(self, tensors):
-        """ Computes the loss of the model after a specific iteration.
-
-        Computes the mean reconstruction loss, which is derived after a forward pass
-        of the model.
-
-        :param tensors: Observations to be passed through model
-
-        :return: Mean reconstruction loss
-        """
-        sample_batch, _, _, _, _ = tensors
-
-        reconst_loss, kl, _ = self.model.forward(x=sample_batch)
-        
-        loss = (
-            self.n_samples
-            * torch.mean(reconst_loss + self.kl_weight * kl)
-        )
-        if self.normalize_loss:
-            loss = loss / self.n_samples
-        return loss
-
-    def on_epoch_begin(self):
-        if self.n_epochs_kl_warmup is not None:
-            self.kl_weight = min(1, self.epoch / self.n_epochs_kl_warmup)
-        else:
-            self.kl_weight = 1.0
-
-    def __setattr__(self, name, value):
-        if isinstance(value, GaussianPosterior):
-            name = name.strip("_")
-            self.register_posterior(name, value)
-        else:
-            object.__setattr__(self, name, value)
 
 
 class GaussianPosterior(Posterior):
@@ -236,6 +134,136 @@ class GaussianPosterior(Posterior):
 
         return x_new.numpy(), x_old.numpy()
 
+
+class GaussianTrainer(Trainer):
+    r"""The VariationalInference class for the unsupervised training of an autoencoder
+    with a latent tree structure.
+
+	Args:
+		:model: A model instance from class ``GaussianVAE``
+		:gene_dataset: A Gene Expression Dataset
+		:train_size: The train size, either a float between 0 and 1 or an integer for the number of training samples
+		 to use Default: ``0.8``.
+		:test_size: The test size, either a float between 0 and 1 or an integer for the number of training samples
+		 to use Default: ``None``, which is equivalent to data not in the train set. If ``train_size`` and ``test_size``
+		 do not add to 1 or the length of the dataset then the remaining samples are added to a ``validation_set``.
+		:n_epochs_kl_warmup: Number of epochs for linear warmup of KL(q(z|x)||p(z)) term. After `n_epochs_kl_warmup`,
+			the training objective is the ELBO. This might be used to prevent inactivity of latent units, and/or to
+			improve clustering of latent space, as a long warmup turns the model into something more of an autoencoder.
+		:\*\*kwargs: Other keywords arguments from the general Trainer class.
+
+	Examples:
+		>>> gene_dataset = GeneExpressionDataset(X)
+        >>> vae = GaussianVAE(gene_dataset.nb_genes)
+        ... n_batch=tree_dataset.n_batches * use_batches, use_cuda=True)
+        >>> trainer = GaussianTrainer(vae, tree_dataset)
+        >>> trainer.train(n_epochs=400)
+	"""
+    default_metrics_to_monitor = ["elbo"]
+
+    def __init__(
+        self,
+        model,
+        gene_dataset,
+        lambda_ = 1.0,
+        train_size=0.8,
+        test_size=None,
+        n_epochs_kl_warmup=100,
+        **kwargs
+    ):
+
+        train_size = float(train_size)
+        if train_size > 1.0 or train_size <= 0.0:
+            raise ValueError(
+                "train_size needs to be greater than 0 and less than or equal to 1"
+            )
+        super().__init__(model, gene_dataset, **kwargs)
+
+        # Set up number of warmup iterations
+        self.n_epochs_kl_warmup = n_epochs_kl_warmup
+        self.normalize_loss = True
+
+        # Total size of the dataset used for training
+        self.n_samples = 1.0
+
+        self.train_set, self.test_set, self.validation_set =  self.train_test_validation(model=model,
+                                                                                         gene_dataset=gene_dataset,
+                                                                                         train_size=train_size,
+                                                                                         test_size=test_size,
+                                                                                         type_class=GaussianPosterior
+                                                                                         )
+            
+        self.train_set.to_monitor = ["elbo"]
+        self.test_set.to_monitor = ["elbo"]
+        self.validation_set.to_monitor = ["elbo"]
+        self.n_samples = len(self.train_set.indices)
+
+    @property
+    def posteriors_loop(self):
+        return ["train_set"]
+
+    def loss(self, tensors):
+        """ Computes the loss of the model after a specific iteration.
+
+        Computes the mean reconstruction loss, which is derived after a forward pass
+        of the model.
+
+        :param tensors: Observations to be passed through model
+
+        :return: Mean reconstruction loss
+        """
+        sample_batch, _, _, _, _ = tensors
+
+        reconst_loss, kl, _ = self.model.forward(x=sample_batch)
+        
+        loss = (
+            self.n_samples
+            * torch.mean(reconst_loss + self.kl_weight * kl)
+        )
+        if self.normalize_loss:
+            loss = loss / self.n_samples
+        return loss
+
+    def on_epoch_begin(self):
+        if self.n_epochs_kl_warmup is not None:
+            self.kl_weight = min(1, self.epoch / self.n_epochs_kl_warmup)
+        else:
+            self.kl_weight = 1.0
+
+    def __setattr__(self, name, value):
+        if isinstance(value, GaussianPosterior):
+            name = name.strip("_")
+            self.register_posterior(name, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def create_posterior(
+        self,
+        model=GaussianVAE,
+        gene_dataset=None,
+        indices=None,
+        type_class=GaussianPosterior,
+    ):
+        """
+        :param model: A ``GaussianVAE` model.
+        :param gene_dataset: A ``TreeDataset`` dataset that has both gene expression data and a tree.
+        :param use_cuda: Default=True.
+        :param type_class: Which constructor to use (here, GaussianPosterior).
+
+        :return: A ``GaussianPosterior`` to use for training.
+        """
+        model = self.model if model is None and hasattr(self, "model") else model
+        gene_dataset = (
+            self.gene_dataset
+            if gene_dataset is None and hasattr(self, "model")
+            else gene_dataset
+        )
+        return type_class(
+            model,
+            gene_dataset,
+            use_cuda=self.use_cuda,
+            data_loader_kwargs=self.data_loader_kwargs,
+        )
     
 
         

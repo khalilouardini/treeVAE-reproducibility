@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal, kl_divergence
 
 from torch.distributions import Normal
-from ..models.modules import Encoder, GaussianDecoder, GaussianLinearDecoder
+from ..models.modules import Encoder, GaussianDecoder #, GaussianLinearDecoder
 
 from typing import Tuple, Dict
 
@@ -71,10 +71,8 @@ class GaussianVAE(nn.Module):
             )
         else:
             self.decoder = GaussianLinearDecoder(
-                n_latent,
-                n_input,
-                n_layers=n_layers,
-                n_hidden=n_hidden,
+                n_input=n_latent,
+                n_output=n_input,
                 sigma=sigma_ldvae
             )
 
