@@ -5,11 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
-from ..models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
+from ..models.modules import Encoder, Decoder, LinearDecoder
 from ..models.utils import one_hot
-from scvi.models.vae import VAE
-import pdb
-import time
 import numpy as np
 from torch.distributions import Normal, Poisson, NegativeBinomial 
 from torch.distributions import kl_divergence as kl
@@ -300,7 +297,8 @@ class TreeVAE(nn.Module):
             # add prior
             nu_inc = 1.0 + root_node.nu
             res += -0.5 * torch.sum(root_node.mu ** 2) / nu_inc - d * 0.5 * np.log(2 * np.pi * nu_inc)
-
+        
+        # prior likelihood of the leaves p(z_1, ..., z_L) \sim Normal(0, Sigma_L)
         return res
 
     def posterior_predictive_density(self, query_node, evidence=None):
@@ -322,9 +320,7 @@ class TreeVAE(nn.Module):
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
-    def inference(
-        self, x, n_samples=1
-    ):
+    def inference(self, x, n_samples=1):
         """Helper function used in forward pass
                 """
         x_ = x
@@ -344,7 +340,7 @@ class TreeVAE(nn.Module):
         library = torch.log(total_counts).view(-1, 1)
 
         px_scale, px_rate, px_r = self.decoder(
-            self.dispersion, z, library, None, None
+            self.dispersion, z, library, None
         )
 
         if self.dispersion == "gene":
@@ -360,17 +356,11 @@ class TreeVAE(nn.Module):
             library=library,
         )
 
-    def forward(
-        self, x, local_l_mean, local_l_var
-    ):
+    def forward(self, x):
         r""" Returns the reconstruction loss
 
 		:param x: tensor of values with shape (batch_size, n_input)
-		:param local_l_mean: tensor of means of the prior distribution of latent variable l
-		 with shape (batch_size, 1)
-		:param local_l_var: tensor of variancess of the prior distribution of latent variable l
-		 with shape (batch_size, 1)
-		:param y: tensor of cell-types labels with shape (batch_size, n_labels)
+
 		:return: the reconstruction loss and the Kullback divergences
 		:rtype: 2-tuple of :py:class:`torch.FloatTensor`
 		"""

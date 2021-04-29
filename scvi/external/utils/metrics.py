@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from sklearn.neighbors import kneighbors_graph
 from sklearn.metrics import jaccard_score
 from sklearn.preprocessing import normalize
+from sklearn.metrics import mean_squared_error 
 
 def ks_pvalue(g, glm_samples, rep_samples):
     """
@@ -49,7 +50,7 @@ def accuracy_imputation(tree, groundtrtuh, imputed, gene):
         N += 1
     return (accuracy / N) * 100
 
-def correlations2(data, normalization=None, vis=True, save_fig=None):
+def correlations(data, normalization=None, vis=True, save_fig=None):
     """
     :param data: dict:imputations (one of them should have the key 'ground truth')
     :param normalization: str: either "rank" or "quantile"
@@ -107,83 +108,28 @@ def correlations2(data, normalization=None, vis=True, save_fig=None):
     
     return df
 
-def correlations(data, normalization=None, vis=True, save_fig=None):
-    """
-    :param data: list: list of arrays with imputations (or ground truth) gene expression in this order: internal - imputed - baseline_avg, baseline_scvi - baseline_cascvi
-    :param normalization: str: either "rank" or "quantile"
-    :param: vis: bool: if True returns violin plots of the density of the correlation coefficients
-    :return:
-    """
-    metrics = []
-    columns = ["Method", "Spearman CC", "Pearson CC", "Kendall Tau"]
+def mse(data):
+    if 'groundtruth' not in data:
+        raise ValueError('This call requires a groundtruth gene expression profile with the key "groundtruth" ')
 
     # groundtruth and imputations
-    internal_X, imputed_X, avg_X, scvi_X, scvi_X_2, cascvi_X, cascvi_X_2, cascvi_X_3  = data
-
-    for i in range(internal_X.shape[1]):
-
-        if normalization == "rank":
-            data0 = stats.rankdata(internal_X[:, i])
-            data1 = stats.rankdata(imputed_X[:, i])
-            data2 = stats.rankdata(avg_X[:, i])
-            data3 = stats.rankdata(scvi_X[:, i])
-            data4 = stats.rankdata(scvi_X_2[:, i])
-            data5 = stats.rankdata(cascvi_X[:, i])
-            data6 = stats.rankdata(cascvi_X_2[:, i])
-            data7 = stats.rankdata(cascvi_X_3[:, i])
-        else:
-            data0 = internal_X[:, i]
-            data1 = imputed_X[:, i]
-            data2 = avg_X[:, i]
-            data3 = scvi_X[:, i]
-            data4 = scvi_X_2[:, i]
-            data5 = cascvi_X[:, i]
-            data6 = cascvi_X_2[:, i]
-            data7 = cascvi_X_3[:, i]
-
-        metrics.append(["Average", stats.spearmanr(data2, data0)[0], stats.pearsonr(data2, data0)[0],
-                        stats.kendalltau(data2, data0)[0]])
-        metrics.append(["scVI Baseline 1", stats.spearmanr(data3, data0)[0], stats.pearsonr(data3, data0)[0],
-                        stats.kendalltau(data3, data0)[0]])
-        metrics.append(["scVI Baseline 2", stats.spearmanr(data4, data0)[0], stats.pearsonr(data4, data0)[0],
-                        stats.kendalltau(data4, data0)[0]])
-        metrics.append(["cascVI", stats.spearmanr(data1, data0)[0], stats.pearsonr(data1, data0)[0],
-                        stats.kendalltau(data1, data0)[0]])
-        metrics.append(["cascVI Baseline 1", stats.spearmanr(data5, data0)[0], stats.pearsonr(data5, data0)[0],
-                        stats.kendalltau(data5, data0)[0]])
-        metrics.append(["cascVI Baseline 2", stats.spearmanr(data6, data0)[0], stats.pearsonr(data6, data0)[0],
-                        stats.kendalltau(data6, data0)[0]])
-        metrics.append(["cascVI Baseline 3", stats.spearmanr(data7, data0)[0], stats.pearsonr(data7, data0)[0],
-                        stats.kendalltau(data7, data0)[0]])
+    internal_X = data['groundtruth']
+    N = internal_X.shape[0]
+    scores = []
+    stds = []
     
-
-    df = pd.DataFrame(metrics, columns=columns)
-
-    #plots
-    if vis:
-        fig, axes = plt.subplots(1, 3, figsize=(20, 5), sharey=True)
-
-        sns.violinplot(ax=axes[0], x="Spearman CC", y="Method",
-                       data=df,
-                       scale="width", palette="Set3")
-        axes[0].set_title("Spearman CC")
-
-        sns.violinplot(ax=axes[1], x="Pearson CC", y="Method",
-                       data=df,
-                       scale="width", palette="Set3")
-        axes[1].set_title("Pearson CC")
-
-        sns.violinplot(ax=axes[2], x="Kendall Tau", y="Method",
-                       data=df,
-                       scale="width", palette="Set3")
-        axes[2].set_title("Kendall Tau")
-
-        plt.suptitle("Correlations", fontsize=16)
+    for method, imputed_X in data.items():
+        if method == 'groundtruth':
+            continue
+        mse_scores = [mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]
+        scores.append(np.mean(mse_scores))
+        stds.append(np.std(mse_scores))
     
-    if save_fig:
-        plt.savefig(save_fig)
+    data_dict = {'MSE': scores, 'std': stds}
+    results = pd.DataFrame.from_dict(data_dict, orient='index', columns=list(data.keys())[1:])
+    return results
+
     
-    return df
 
 def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None):
     if do_normalize:

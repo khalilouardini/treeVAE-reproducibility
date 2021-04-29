@@ -173,7 +173,6 @@ class TreePosterior(Posterior):
                 for tensors in self:
                     sample_batch, _, _, batch_index, labels = tensors
                     if len(sample_batch.shape) > 2:
-                        # sample_batch = sample_batch.view(-1, sample_batch.shape[2])
                         sample_batch = torch.mean(sample_batch, dim=1)
 
                     px_rate = self.model.inference(
@@ -266,7 +265,7 @@ class TreePosterior(Posterior):
             tensor with shape (n_cells, n_genes)
 
         """
-        assert self.model.reconstruction_loss in ["zinb", "nb", "poisson"]
+        assert self.model.reconstruction_loss in ["nb", "poisson"]
         x_old = []
         x_new = []
         for tensors in self.update({"batch_size": len(self.barcodes)}):

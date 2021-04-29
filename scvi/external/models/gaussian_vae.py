@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal, kl_divergence
 
 from torch.distributions import Normal
-from ..models.modules import Encoder, GaussianDecoder #, GaussianLinearDecoder
+from ..models.modules import Encoder, GaussianDecoder , GaussianLinearDecoder
 
 from typing import Tuple, Dict
 
@@ -75,6 +75,7 @@ class GaussianVAE(nn.Module):
                 n_output=n_input,
                 sigma=sigma_ldvae
             )
+
 
     def get_latents(self, x):
         """Returns the result of ``sample_from_posterior_z`` inside a list

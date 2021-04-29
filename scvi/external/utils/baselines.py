@@ -48,7 +48,7 @@ def scvi_baseline(tree, posterior, weighted=True, give_latent=False, n_samples_z
     reconstructed = posterior.generate(n_samples=10)[0][:, :, 0]
     if give_latent:
         latents = np.array([posterior.get_latent()[0] for i in range(n_samples_z)])
-        D = latents[0].shape[1]
+        D = latents.shape[2]
 
     # Dimensions
     G = reconstructed.shape[1]
@@ -132,8 +132,8 @@ def scvi_baseline_z(tree,
     imputed_z = {}
 
     # Posterior
-    latents = np.array([posterior.get_latent(give_mean=False)[0] for i in range(n_samples_z)])
-    D = latents[0].shape[1]
+    latents = np.array([posterior.get_latent(give_mean=False) for i in range(n_samples_z)])
+    D = latents.shape[2]
 
     # Initialize
     idx = 0
@@ -143,7 +143,7 @@ def scvi_baseline_z(tree,
             idx += 1
 
     # Averaging
-    for n in tree.traverse('levelorder'):
+    for n in tree.traverse('levelorder')    :
         if n.is_leaf():
             continue
         else:

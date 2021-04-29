@@ -7,7 +7,7 @@ import ete3
 import matplotlib
 matplotlib.use('TkAgg')
 sys.path.append('.')
-from utils.precision_matrix import precision_matrix
+from ..utils.precision_matrix import precision_matrix
 
 
 class Poisson_GLM:

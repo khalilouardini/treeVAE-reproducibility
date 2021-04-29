@@ -14,7 +14,7 @@ sys.path.append('.')
 from scipy.stats import multivariate_normal
 from ..utils.precision_matrix import precision_matrix, marginalize_covariance, marginalize_internal
 from ..dataset.tree import TreeDataset, GeneExpressionDataset
-from ..models.treevae import TreeVAE
+from ..models.gaussian_treevae import GaussianTreeVAE
 from ..dataset.anndataset import AnnDatasetFromAnnData
 from ..utils.data_util import get_leaves, get_internal
 
@@ -286,26 +286,20 @@ class PPCA:
         #create tree dataset
         cas_dataset = TreeDataset(gene_dataset, tree=self.tree, filtering=False)
         use_batches = False
-        treevae = TreeVAE(cas_dataset.nb_genes,
+        treevae = GaussianTreeVAE(cas_dataset.nb_genes,
                     tree=cas_dataset.tree,
-                    n_batch=cas_dataset.n_batches * use_batches,
                     n_latent=self.latent,
-                    prior_t=self.branch_length
+                    prior_t=self.branch_length,
+                    use_MP=True,
                     )
         predictive_mean_z, predictive_cov_z = {}, {}
         for n in self.tree.traverse('levelorder'):
             if not n.is_leaf():
                 query_node = n.name
-                treevae.initialize_visit()
-                treevae.initialize_messages(
-                    evidence,
-                    cas_dataset.barcodes,
-                    self.latent)
-
-                treevae.perform_message_passing((treevae.tree & query_node), self.latent, True)
-                
-                predictive_mean_z[n.name] = (treevae.tree & query_node).mu.numpy()
-                predictive_cov_z[n.name] = (treevae.tree & query_node).nu * np.identity(self.latent)
+                mu, nu = treevae.posterior_predictive_density(query_node=query_node,
+                                                             evidence=evidence     
+                                                             )
+                predictive_mean_z[n.name], predictive_cov_z[n.name] = mu, nu * np.identity(self.latent)
         return predictive_mean_z, predictive_cov_z
 
     def compute_approx_posterior_predictive(self, mean_field=False, use_MP=False, sample_size=100):
