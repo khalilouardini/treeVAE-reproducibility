@@ -5,7 +5,7 @@ import seaborn as sns
 import sys
 import ete3
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('WebAgg')
 sys.path.append('.')
 from ..utils.precision_matrix import precision_matrix
 
@@ -86,13 +86,13 @@ class Poisson_GLM:
 
     def simulate_ge(self):
         # dimension of initial space (i.e number of genes)
-        self.W = np.random.normal(loc=0, scale=0.5, size=(self.latent, self.dim))
+        self.W = np.random.normal(loc=0, scale=0.5, size=(self.dim, self.latent))
         self.beta = np.random.normal(loc=0, scale=0.5, size=self.dim)
 
         #self.W = np.random.normal(loc=0, scale=1.0, size=(self.latent, self.dim))
         #self.beta = np.random.normal(loc=0, scale=1.0, size=self.dim)
 
-        self.mu = np.clip(a=np.exp(self.z @ self.W + self.beta),
+        self.mu = np.clip(a=np.exp(self.z @ self.W.T + self.beta),
                                  a_min=0,
                                  a_max=5000
                           )

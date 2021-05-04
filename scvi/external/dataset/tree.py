@@ -10,6 +10,7 @@ import scipy.io as sp_io
 import shutil
 from scipy.sparse import csr_matrix
 from ete3 import Tree
+import sys
 
 from scvi.dataset.dataset import (
     DownloadableDataset,
