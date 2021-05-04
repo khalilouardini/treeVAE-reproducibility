@@ -121,7 +121,8 @@ class VAE(nn.Module):
             n_input, 1, n_layers=1, n_hidden=n_hidden, dropout_rate=dropout_rate
         )
         # decoder goes from n_latent-dimensional space to n_input-d data
-        if not ldvae:
+        self.ldvae = ldvae
+        if not self.ldvae:
             self.decoder = DecoderSCVI(
                 n_latent,
                 n_input,
@@ -131,7 +132,7 @@ class VAE(nn.Module):
             )
         else:
             # linearly decoded VAE
-            if ldvae:
+            if self.ldvae:
                 print("==== We will use a linear decoder ===")
                 self.decoder = LinearDecoderSCVI(
                     n_input=n_latent,

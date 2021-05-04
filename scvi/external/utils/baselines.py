@@ -116,7 +116,9 @@ def scvi_baseline_z(tree,
                     weighted=True,
                     n_samples_z=None,
                     library_size=10000,
-                    gaussian=True
+                    gaussian=True,
+                    known_latent=False,
+                    latent=None
                     ):
     """
     :param tree: ete3 phylogenetic tree
@@ -132,7 +134,11 @@ def scvi_baseline_z(tree,
     imputed_z = {}
 
     # Posterior
-    latents = np.array([posterior.get_latent(give_mean=False) for i in range(n_samples_z)])
+    if known_latent:
+        latents = latent
+        n_samples_z = latents.shape[0]
+    else:
+        latents = np.array([posterior.get_latent(give_mean=False) for i in range(n_samples_z)])
     D = latents.shape[2]
 
     # Initialize
@@ -168,17 +174,27 @@ def scvi_baseline_z(tree,
             # Decoding the averaged latent vector
             with torch.no_grad():
                 if not gaussian:
-                    px_scale, px_r, px_rate, px_dropout = posterior.model.decoder.forward(model.dispersion,
-                                                                                    torch.from_numpy(mean_z).float(),
-                                                                                    torch.from_numpy(
-                                                                                        np.array([np.log(library_size)])),
-                                                                                    0)
-                    l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+                    if not model.ldvae:
+                        px_scale, px_rate, px_r = posterior.model.decoder(dispersion=model.dispersion,
+                                                                            z=torch.from_numpy(mean_z).float(),
+                                                                            library=torch.from_numpy(np.array([np.log(library_size)]))
+                                                                                )
+                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+                    else:
+                        px_scale, px_rate, raw_px_scale = posterior.model.decoder(dispersion=model.dispersion,
+                                                                                z=torch.from_numpy(mean_z).float(),
+                                                                                library=torch.from_numpy(np.array([np.log(library_size)]))
+                                                                                )
+                        px_rate = torch.exp(raw_px_scale)                                                        
+                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=5000)                        
                     data = Poisson(l_train).sample().cpu().numpy()
-                    imputed[n.name] = data
+                    imputed[n.name] = np.clip(data, 1e8)
                 else:
                     p_m, p_v = posterior.model.decoder(torch.from_numpy(mean_z).float())                                                               
-                    imputed[n.name] = Normal(p_m, p_v.sqrt()).sample().cpu().numpy()
+                    imputed[n.name] = np.clip(a=Normal(p_m, p_v.sqrt()).sample().cpu().numpy(),
+                                             a_max=1e8,
+                                              a_min=-1e8
+                                              )
 
     return imputed, imputed_z
 

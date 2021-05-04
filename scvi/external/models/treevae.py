@@ -73,22 +73,20 @@ class TreeVAE(nn.Module):
         )
 
         # decoder goes from n_latent-dimensional space to n_input-d data
-        if not ldvae:
+        self.ldvae = ldvae
+        if not self.ldvae:
             self.decoder = Decoder(
                 n_latent,
                 n_input,
-                n_cat_list=[0],
                 n_layers=n_layers,
                 n_hidden=n_hidden,
             )
         else:
             # linearly decoded VAE
-            if ldvae:
-                print("==== We will use a linear decoder ===")
+            if self.ldvae:
                 self.decoder = LinearDecoder(
                     n_input=n_latent,
                     n_output=n_input,
-                    n_cat_list=[0],
                     use_batch_norm=False,
                     bias=True
                 )
@@ -97,6 +95,8 @@ class TreeVAE(nn.Module):
             return node.distance == distance
 
         self.use_clades = use_clades
+        leaves = [n for n in tree.traverse('levelorder') if n.is_leaf()]
+        
         if self.use_clades:
             # Cluster tree into clades: After a certain depth (here = 3), all children nodes are assumed iid and grouped into
             # "clades", for the training we sample one instance of each clade.
@@ -108,7 +108,7 @@ class TreeVAE(nn.Module):
             inf_tree.add_child(collapsed_tree)
         else:
             # No collapsing for simulations (and small trees)
-            for l in tree.get_leaves():
+            for l in leaves:
                 l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
             self.root = tree.name
             # add prior node
@@ -119,7 +119,7 @@ class TreeVAE(nn.Module):
         self.tree = inf_tree
 
         # leaves barcodes
-        self.barcodes = [l.name for l in self.tree.get_leaves()]
+        self.barcodes = [l.name for l in leaves]
 
         # branch length for Message Passing
         if not prior_t:
@@ -320,6 +320,32 @@ class TreeVAE(nn.Module):
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
+    def sample_from_posterior_z(self, x, give_mean=False, n_samples=5000):
+        """Samples the tensor of latent values from the posterior
+
+        Parameters
+        ----------
+        x
+            tensor of values with shape ``(batch_size, n_input)``
+        give_mean
+            is True when we want the mean of the posterior  distribution rather than sampling (Default value = False)
+        n_samples
+            how many MC samples to average over for transformed mean (Default value = 5000)
+
+        Returns
+        -------
+        type
+            tensor of shape ``(batch_size, n_latent)``
+
+        """
+        qz_m, qz_v, z = self.z_encoder(x)
+        if not give_mean:
+            samples = Normal(qz_m, qz_v.sqrt()).sample([n_samples])
+            z = torch.mean(samples, dim=0)
+        else:
+            z = qz_m
+        return z
+        
     def inference(self, x, n_samples=1):
         """Helper function used in forward pass
                 """
@@ -339,9 +365,15 @@ class TreeVAE(nn.Module):
         total_counts = x.sum(dim=1, dtype=torch.float64)
         library = torch.log(total_counts).view(-1, 1)
 
-        px_scale, px_rate, px_r = self.decoder(
-            self.dispersion, z, library, None
-        )
+        if self.ldvae:
+            px_scale, px_rate, raw_px_scale = self.decoder(
+                self.dispersion, z, library
+            )
+            px_rate = torch.clamp(torch.exp(raw_px_scale), max=5000)
+        else:
+            px_scale, px_rate, _ = self.decoder(
+                self.dispersion, z, library
+            )
 
         if self.dispersion == "gene":
             px_r = torch.exp(self.px_r)
@@ -373,7 +405,7 @@ class TreeVAE(nn.Module):
         z = outputs["z"]
         library = outputs["library"]
 
-        self.encoder_variance.append(np.linalg.norm(qz_v.detach().numpy(), axis=1))
+        self.encoder_variance.append(np.linalg.norm(qz_v.detach().cpu().numpy(), axis=1))
         
         if self.use_MP:
             # Message passing likelihood
