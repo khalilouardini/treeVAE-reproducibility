@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
-from ..models.modules import Encoder, Decoder, LinearDecoder, GaussianDecoder, GaussianLinearDecoder
+from .modules import Encoder, Decoder, LinearDecoder, GaussianDecoder, GaussianLinearDecoder
 import numpy as np
-from torch.distributions import kl_divergence as kl
+from torch.distributions import Normal, kl_divergence
 
 torch.backends.cudnn.benchmark = True
 
@@ -74,25 +74,27 @@ class GaussianTreeVAE(nn.Module):
             self.decoder = GaussianLinearDecoder(
                 n_input=n_latent,
                 n_output=n_input,
-                sigma=sigma_ldvae
+                sigma=sigma_ldvae,
+                use_batch_norm=False
             )
 
         def cut_tree(node, distance):
             return node.distance == distance
 
+        leaves = [n for n in tree.traverse('levelorder') if n.is_leaf()]
         self.use_clades = use_clades
         if self.use_clades:
             # Cluster tree into clades: After a certain depth (here = 3), all children nodes are assumed iid and grouped into
             # "clades", for the training we sample one instance of each clade.
             collapsed_tree = Tree(tree.write(is_leaf_fn=lambda x: cut_tree(x, 3)))
-            for l in collapsed_tree.get_leaves():
+            for l in leaves:
                 l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
             self.root = collapsed_tree.name
             inf_tree = Tree("prior_root;")
             inf_tree.add_child(collapsed_tree)
         else:
             # No collapsing for simulations (and small trees)
-            for l in tree.get_leaves():
+            for l in leaves:
                 l.cells = tree.search_nodes(name=l.name)[0].get_leaf_names()
             self.root = tree.name
             # add prior node
@@ -103,14 +105,14 @@ class GaussianTreeVAE(nn.Module):
         self.tree = inf_tree
 
         # leaves barcodes
-        self.barcodes = [l.name for l in self.tree.get_leaves()]
+        self.barcodes = [l.name for l in leaves]
 
         # branch length for Message Passing
         if not prior_t:
             prior_t = 1.0
         if type(prior_t) == float:
             self.prior_t = {}
-            for n in self.tree.traverse():
+            for n in self.tree.traverse('levelorder'):
                 self.prior_t[n.name] = prior_t
             self.prior_t['prior_root'] = 1.0
         else:
@@ -152,7 +154,7 @@ class GaussianTreeVAE(nn.Module):
                 )
 
     def initialize_visit(self):
-        for node in self.tree.traverse():
+        for node in self.tree.traverse('levelorder'):
             node.add_features(visited=False)
 
     def perform_message_passing(self, root_node, d, include_prior):
@@ -275,7 +277,7 @@ class GaussianTreeVAE(nn.Module):
         root_node = self.tree & self.root
 
         # agg Z messages
-        for node in self.tree.traverse():
+        for node in self.tree.traverse('levelorder'):
             res += node.log_z
 
         if add_prior:
@@ -384,11 +386,11 @@ class GaussianTreeVAE(nn.Module):
             qz = Normal(qz_m, torch.sqrt(qz_v)).log_prob(z).sum(dim=-1)
         else:
             mp_lik = None
-            # scVI Kl Divergence
+            # KL divergence
             mean = torch.zeros_like(qz_m)
             scale = torch.ones_like(qz_v)
-            qz = kl(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
-        
+            qz = kl_divergence(Normal(qz_m, torch.sqrt(qz_v)), Normal(mean, scale)).sum(dim=1)
+                
         # Reconstruction loss
         reconst_loss = -Normal(px_m, torch.sqrt(px_v)).log_prob(x).sum(dim=-1)
 

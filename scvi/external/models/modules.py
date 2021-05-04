@@ -78,14 +78,12 @@ class FCLayers(nn.Module):
             )
         )
 
-    def forward(self, x: torch.Tensor, instance_id: int = 0):
+    def forward(self, x: torch.Tensor):
         """Forward computation on ``x``.
         Parameters
         ----------
         x
             tensor of values with shape ``(n_in,)``
-        instance_id
-            Use a specific conditional instance normalization (batchnorm)
         x: torch.Tensor
         Returns
         -------
@@ -217,7 +215,7 @@ class Decoder(nn.Module):
         )
 
     def forward(
-        self, dispersion: str, z: torch.Tensor, library: torch.Tensor, *cat_list: int
+        self, dispersion: str, z: torch.Tensor, library: torch.Tensor
     ):
         """The forward computation for a single sample.
 
@@ -234,8 +232,6 @@ class Decoder(nn.Module):
             tensor with shape ``(n_input,)``
         library
             library size
-        cat_list
-            list of category membership(s) for this sample
 
         Returns
         -------
@@ -243,7 +239,7 @@ class Decoder(nn.Module):
             parameters for the NB/Poisson distribution of expression
         """
         # The decoder returns values for the parameters of the NB/Poisson distribution
-        px = self.px_decoder(z, *cat_list)
+        px = self.px_decoder(z)
         px_scale = self.px_scale_decoder(px)
         # Clamp to high value: exp(12) ~ 160000 to avoid nans (computational stability)
         px_rate = torch.exp(library) * px_scale  # torch.clamp( , max=12)
@@ -255,7 +251,7 @@ class LinearDecoder(nn.Module):
         self,
         n_input: int,
         n_output: int,
-        use_batch_norm: bool = True,
+        use_batch_norm: bool = False,
         bias: bool = False,
     ):
         super().__init__()
@@ -278,7 +274,7 @@ class LinearDecoder(nn.Module):
         px_scale = torch.softmax(raw_px_scale, dim=-1)
         px_rate = torch.exp(library) * px_scale
 
-        return px_scale, px_rate, None
+        return px_scale, px_rate, raw_px_scale
 
 
 class GaussianDecoder(nn.Module):
@@ -353,7 +349,7 @@ class GaussianLinearDecoder(nn.Module):
         self,
         n_input: int,
         n_output: int,
-        use_batch_norm: bool = True,
+        use_batch_norm: bool = False,
         bias: bool = False,
         sigma: float = 1.0
     ):

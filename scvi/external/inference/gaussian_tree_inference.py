@@ -97,7 +97,7 @@ class GaussianTreePosterior(GaussianPosterior):
 
         self.clades = clades
         self.barcodes = gene_dataset.barcodes
-        self.use_cuda = False
+        self.use_cuda = use_cuda
 
         sampler = SequentialCladeSampler(self.clades)
         batch_size = len(self.clades)
@@ -119,7 +119,6 @@ class GaussianTreePosterior(GaussianPosterior):
 
         # Iterate once over the posterior and compute the elbo
         print("computing elbo")
-        self.use_cuda = False
 
         elbo = 0
         for i_batch, tensors in enumerate(self):
@@ -127,9 +126,10 @@ class GaussianTreePosterior(GaussianPosterior):
             reconst_loss, qz, mp_lik = vae.forward(sample_batch)
             elbo += torch.sum(reconst_loss)
             elbo += torch.sum(qz)
-            elbo -= mp_lik
+            if mp_lik:
+                elbo -= mp_lik
 
-        n_samples = len(self.barcodes)
+        n_samples = len(self.indices)
         elbo /= n_samples
         return elbo
 
@@ -214,11 +214,8 @@ class GaussianTreePosterior(GaussianPosterior):
     @torch.no_grad()
     def imputation_internal(self,
                             query_node,
-                            give_mean=False,
                             z_averaging=None,
                             pp_averaging=None,
-                            empirical_var=False,
-                            other_posterior=None,
                             known_latent=None
                             ):
         """
@@ -231,56 +228,30 @@ class GaussianTreePosterior(GaussianPosterior):
         """
         # 1. sampling from posterior z ~ q(z|x) at the leaves
         if not z_averaging:
-            if other_posterior:
-                z = other_posterior.get_latent()[0]
-            elif known_latent is not None:
+            if known_latent is not None:
                 z = known_latent
             else:
-                z = self.get_latent(give_mean=False)[0]
+                z = self.get_latent(give_mean=False)
         else:
-            if other_posterior:
-                latents_z = [other_posterior.get_latent(give_mean=False)[0] for n in range(z_averaging)]
-                z = np.mean(np.stack(latents_z), axis=0)
-            else:
-                latents_z = [self.get_latent(give_mean=False)[0] for n in range(z_averaging)]
-                z = np.mean(np.stack(latents_z), axis=0)
+            latents_z = [self.get_latent(give_mean=False) for n in range(z_averaging)]
+            z = np.mean(np.stack(latents_z), axis=0)
 
         # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
+        mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
+                                                            evidence=z)
         if not pp_averaging:
-            mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
-                                                                evidence=z)
-
             z_star = Normal(mu_star, torch.from_numpy(np.array([nu_star]))).sample()
             data_z = z_star
-
         else:
-            normal_params = [self.model.posterior_predictive_density(query_node=query_node,
-                                                                evidence=z) for n in range(pp_averaging)]
-            latents_z_star = []
-            for (mu, nu) in normal_params:
-                latents_z_star.append(Normal(mu, torch.from_numpy(np.array([nu]))).sample())
-
-            z_star = torch.mean(torch.stack(latents_z_star),
-                                dim=0)
-            data_z = z_star
+            z_star = Normal(mu_star, torch.from_numpy(np.array([nu_star]))).sample((pp_averaging,))
+            z_star = torch.mean(z_star, dim=0)
 
         # 3. Decode latent vector x* ~ p(x*|z = z*)
         p_m, p_v = self.model.decoder.forward(z_star.view(1, -1).float())
-        data = Normal(p_m, p_v.sqrt()).sample().cpu().numpy()[0]
+        data = Normal(p_m, p_v.sqrt()).sample((pp_averaging,)).cpu().numpy()
+        data = np.mean(data, axis=0)
 
-        if empirical_var:
-            samples = np.array([Normal(p_m, p_v.sqrt()).sample().cpu().numpy().flatten() for i in range(1000)])
-            var = np.var(samples, axis=0)
-
-            if give_mean:
-                return px_rate, var, data_z
-
-            return data, var, data_z
-        else:
-            if give_mean:
-                return px_rate, data_z
-
-            return data, data_z
+        return data, z_star
 
 
 class GaussianTreeTrainer(Trainer):
@@ -362,21 +333,25 @@ class GaussianTreeTrainer(Trainer):
 
         loss_1 = torch.mean(reconst_loss) * n_samples
         self.history_train['Reconstruction'].append(loss_1.item() / n_samples)
+
         loss_2 = torch.mean(qz) * n_samples
         self.history_train['Gaussian pdf'].append(loss_2.item() / n_samples)
+
         if mp_lik:
             loss_3 = -1 * mp_lik
             self.history_train['MP_lik'].append(loss_3.item() / n_samples)
+        else:
+            loss_3 = torch.from_numpy(np.array([0.0]))
 
         self.history_train['elbo'].append((loss_1.item() + loss_2.item() + loss_3.item()) / n_samples)
         self.history_train['ratio'].append(loss_1.item() / self.lambda_ * self.kl_weight * loss_2.item())
         self.history_train['elbo_weighted'].append(( loss_1.item() + (self.lambda_ * self.kl_weight * (loss_2.item() + loss_3.item()) ) ) / n_samples)
 
-        print("Encodings MP Likelihood: {}".format(self.history_train['MP_lik'][-1]))
+        #print("Encodings MP Likelihood: {}".format(self.history_train['MP_lik'][-1]))
         #print("ELBO Loss: {}".format(self.history_train['elbo'][-1]))
         #print("Varitional Likelihood: {}".format(self.history_train['Gaussian pdf'][-1]))
 
-        return (loss_1 + (self.kl_weight * self.lambda_ * loss_2) + (self.lambda_ * self.kl_weight * loss_3)) / n_samples
+        return (loss_1 + (self.kl_weight * self.lambda_ * loss_2) + (self.lambda_ * self.kl_weight * loss_3)) / n_samples  
 
     def on_epoch_begin(self):
         if self.n_epochs_kl_warmup is not None:
@@ -428,6 +403,7 @@ class GaussianTreeTrainer(Trainer):
         )
 
         barcodes = gene_dataset.barcodes
+        leaves = [n for n in model.tree.traverse('levelorder') if n.is_leaf()]
 
         # this is where we need to shuffle within the tree structure
         train_indices, test_indices, validate_indices = [], [], []
@@ -435,14 +411,14 @@ class GaussianTreeTrainer(Trainer):
         # for each clade induced by an internal node at a given depth split into
         # train, test, and validation and append these indices to the master list
         # introduce an index for each leaf in the tree
-        for l in model.tree.get_leaves():
+        for l in leaves:
             c = l.cells
             indices = get_indices_in_dataset(c, list(range(len(c))), barcodes)
             l.indices = np.array(indices)
             self.clades.append(indices)
 
         # randomly split leaves into test, train, and validation sets
-        for l in model.tree.get_leaves():
+        for l in leaves:
             leaf_bunch = l.indices
 
             if len(leaf_bunch) == 1:

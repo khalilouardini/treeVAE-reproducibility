@@ -25,7 +25,7 @@ class GaussianPosterior(Posterior):
         gene_dataset: GeneExpressionDataset,
         shuffle=False,
         indices=None,
-        use_cuda=True,
+        use_cuda=False,
         data_loader_kwargs=dict(),
     ):
         super().__init__(
@@ -33,9 +33,10 @@ class GaussianPosterior(Posterior):
             gene_dataset=gene_dataset,
             shuffle=shuffle,
             indices=indices,
-            use_cuda=use_cuda,
             data_loader_kwargs=data_loader_kwargs
         )
+
+        self.use_cuda = use_cuda
 
     def elbo(self) -> float:
         elbo = self.compute_elbo(self.model)
@@ -45,7 +46,6 @@ class GaussianPosterior(Posterior):
     def compute_elbo(self, vae, **kwargs):
         # Iterate once over the posterior and compute the elbo
         print("computing elbo")
-        self.use_cuda = False
 
         elbo = 0
         for i_batch, tensors in enumerate(self):
@@ -222,6 +222,7 @@ class GaussianTrainer(Trainer):
         )
         if self.normalize_loss:
             loss = loss / self.n_samples
+            
         return loss
 
     def on_epoch_begin(self):

@@ -36,7 +36,6 @@ class GaussianVAE(nn.Module):
     def __init__(
         self,
         n_input: int,
-        n_batch: int = 0,
         n_labels: int = 0,
         n_hidden: int = 128,
         n_latent: int = 10,
@@ -73,7 +72,8 @@ class GaussianVAE(nn.Module):
             self.decoder = GaussianLinearDecoder(
                 n_input=n_latent,
                 n_output=n_input,
-                sigma=sigma_ldvae
+                sigma=sigma_ldvae,
+                use_batch_norm=False
             )
 
 
