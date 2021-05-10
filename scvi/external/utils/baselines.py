@@ -110,16 +110,127 @@ def scvi_baseline(tree, posterior, weighted=True, give_latent=False, n_samples_z
 
 
 @torch.no_grad()
+def avg_baseline_z(tree,
+                    posterior,
+                    model,
+                    weighted=True,
+                    library_size=10000,
+                    n_samples_z=1,
+                    gaussian=True,
+                    known_latent=False,
+                    latent=None,
+                    use_cuda=False
+                    ):
+    """
+    :param tree: ete3 phylogenetic tree
+    :param posterior: scVI posterior object
+    :param model: VAE or variant
+    :param weighted: True if the average is weighted
+    :param give_latent: True to return averaged latent representations
+    :param n_samples_z: number of latent imputations
+    :param library_size:
+    :return: imputed Gene Expression
+    """
+    imputed = {}
+    imputed_z = {}
+    imputed_cov_z = {}
+
+    # Posterior
+    if known_latent:
+        latents = latent
+        n_samples_z = latents.shape[0]
+    else:
+        latents = []
+        for i in range(n_samples_z):
+            z, qz_v = posterior.get_latent(give_mean=False, give_cov=True)
+            latents.append(z)
+        latents = np.array(latents)
+    D = latents.shape[2]
+
+    # Initialize
+    idx = 0
+    for n in tree.traverse('levelorder'):
+        if n.is_leaf():
+            n.add_features(latent=latents[:, idx])
+            n.add_features(cov=qz_v[idx])
+            idx += 1
+
+    # Averaging
+    for n in tree.traverse('levelorder'):
+        if n.is_leaf():
+            continue
+        else:
+            # Init
+            sub_leaves = n.get_leaves()
+            mean_z = np.zeros(shape=(n_samples_z, D))
+            cov_z = 0
+
+            # Loop over leaves
+            for l in sub_leaves:
+                if weighted:
+                    dist = n.get_distance(l)
+                    if dist > 0:
+                        mean_z += l.latent / dist
+                    elif dist == 0:
+                        mean_z += l.latent
+                    else:
+                        raise ValueError("Negative branch length value detected in the tree")
+                else:
+                    mean_z += l.latent
+                cov_z += l.cov
+                
+            mean_z /= len(sub_leaves)
+            imputed_z[n.name] = mean_z
+            imputed_cov_z[n.name] = cov_z 
+
+            ## GPU
+            library = torch.from_numpy(np.array([np.log(library_size)]))
+            if use_cuda:
+                mean_z = torch.from_numpy(mean_z).float().to('cuda:0')
+                library = library.to('cuda:0')
+            else:
+                mean_z = torch.from_numpy(mean_z).float()
+
+            # Decoding the averaged latent vector
+            with torch.no_grad():
+                if not gaussian:
+                    if not model.ldvae:
+                        px_scale, px_rate, px_r = posterior.model.decoder(dispersion=model.dispersion,
+                                                                            z=mean_z,
+                                                                            library=library
+                                                                                )
+                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+                    else:
+                        px_scale, px_rate, raw_px_scale = posterior.model.decoder(dispersion=model.dispersion,
+                                                                                z=mean_z,
+                                                                                library=library
+                                                                                )
+                        px_rate = torch.exp(raw_px_scale)                                                        
+                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=5000)    
+
+                    data = torch.mean(Poisson(l_train).sample((50,)), axis=0).cpu().numpy()
+                    imputed[n.name] = np.clip(a=data,
+                                              a_max=1e8,
+                                              a_min=-1e8
+                                              )
+                else:
+                    p_m, p_v = posterior.model.decoder(mean_z)                                                               
+                    imputed[n.name] = np.clip(a=Normal(p_m, p_v.sqrt()).sample().cpu().numpy(),
+                                             a_max=1e8,
+                                             a_min=-1e8
+                                             )
+
+    return imputed, imputed_z, imputed_cov_z
+
+
+@torch.no_grad()
 def scvi_baseline_z(tree,
                     posterior,
                     model,
                     weighted=True,
                     n_samples_z=None,
                     library_size=10000,
-                    gaussian=True,
-                    known_latent=False,
-                    latent=None
-                    ):
+                    use_cuda=False):
     """
     :param tree: ete3 phylogenetic tree
     :param posterior: scVI posterior object
@@ -134,11 +245,7 @@ def scvi_baseline_z(tree,
     imputed_z = {}
 
     # Posterior
-    if known_latent:
-        latents = latent
-        n_samples_z = latents.shape[0]
-    else:
-        latents = np.array([posterior.get_latent(give_mean=False) for i in range(n_samples_z)])
+    latents = np.array([posterior.get_latent()[0] for i in range(n_samples_z)])
     D = latents.shape[2]
 
     # Initialize
@@ -149,7 +256,7 @@ def scvi_baseline_z(tree,
             idx += 1
 
     # Averaging
-    for n in tree.traverse('levelorder')    :
+    for n in tree.traverse('levelorder'):
         if n.is_leaf():
             continue
         else:
@@ -169,34 +276,37 @@ def scvi_baseline_z(tree,
                         raise ValueError("Negative branch length value detected in the tree")
                 else:
                     mean_z += l.latent
-            imputed_z[n.name] = mean_z / len(sub_leaves)
+            mean_z /= len(sub_leaves)
+            imputed_z[n.name] = mean_z
+
+            ## GPU
+            library = torch.from_numpy(np.array([np.log(library_size)]))
+            if use_cuda:
+                mean_z = torch.from_numpy(mean_z).float().to('cuda:0')
+                library = library.to('cuda:0')
+            else:
+                mean_z = torch.from_numpy(mean_z).float()
 
             # Decoding the averaged latent vector
             with torch.no_grad():
-                if not gaussian:
-                    if not model.ldvae:
-                        px_scale, px_rate, px_r = posterior.model.decoder(dispersion=model.dispersion,
-                                                                            z=torch.from_numpy(mean_z).float(),
-                                                                            library=torch.from_numpy(np.array([np.log(library_size)]))
-                                                                                )
-                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
-                    else:
-                        px_scale, px_rate, raw_px_scale = posterior.model.decoder(dispersion=model.dispersion,
-                                                                                z=torch.from_numpy(mean_z).float(),
-                                                                                library=torch.from_numpy(np.array([np.log(library_size)]))
-                                                                                )
-                        px_rate = torch.exp(raw_px_scale)                                                        
-                        l_train = torch.clamp(torch.mean(px_rate, axis=0), max=5000)                        
-                    data = Poisson(l_train).sample().cpu().numpy()
-                    imputed[n.name] = np.clip(data, 1e8)
-                else:
-                    p_m, p_v = posterior.model.decoder(torch.from_numpy(mean_z).float())                                                               
-                    imputed[n.name] = np.clip(a=Normal(p_m, p_v.sqrt()).sample().cpu().numpy(),
-                                             a_max=1e8,
-                                              a_min=-1e8
-                                              )
+                px_scale, px_r, px_rate, px_dropout = posterior.model.decoder.forward(model.dispersion,
+                                                                                 mean_z,
+                                                                                 library,
+                                                                                 0)
+                
+                if model.reconstruction_loss=='poisson' and model.ldvae==True:
+                    px_rate = px_r
+
+            l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e5)
+
+            data = torch.mean(Poisson(l_train).sample((50,)), axis=0).cpu().numpy()
+
+            imputed[n.name] = data
 
     return imputed, imputed_z
+
+
+
 
 @torch.no_grad()
 def cascvi_baseline_z(tree,

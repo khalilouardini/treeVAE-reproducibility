@@ -7,6 +7,9 @@ from sklearn.neighbors import kneighbors_graph
 from sklearn.metrics import jaccard_score
 from sklearn.preprocessing import normalize
 from sklearn.metrics import mean_squared_error 
+from sklearn.metrics.pairwise import manhattan_distances
+from scipy.stats import multivariate_normal
+import os
 
 def ks_pvalue(g, glm_samples, rep_samples):
     """
@@ -106,9 +109,10 @@ def correlations(data, normalization=None, vis=True, save_fig=None):
     if save_fig:
         plt.savefig(save_fig)
     
-    return df
+    return df    
 
-def mse(data):
+
+def mse(data, metric):
     if 'groundtruth' not in data:
         raise ValueError('This call requires a groundtruth gene expression profile with the key "groundtruth" ')
 
@@ -121,7 +125,10 @@ def mse(data):
     for method, imputed_X in data.items():
         if method == 'groundtruth':
             continue
-        mse_scores = [mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]
+        if metric == 'MSE':
+            mse_scores = [mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]
+        elif metric == 'L1':
+            mse_scores = [manhattan_distances(internal_X[1].reshape(1, -1), imputed_X[1].reshape(1, -1)) for i in range(N)]
         scores.append(np.mean(mse_scores))
         stds.append(np.std(mse_scores))
     
@@ -133,70 +140,40 @@ def mse(data):
 
 def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None):
     if do_normalize:
-        for i in range(len(data)):
-            data[i] = normalize(data[i])
-    if len(data) == 3:
-        query_z, query_scvi_z, query_cascvi_z = data
-        n_neighbors = range(2, max_neighbors)
-        score_scvi = []
-        score_cascvi = []
+        for method in data:
+            data[method] = normalize(data[method])
+    
+    n_neighbors = range(2, max_neighbors)
+    query_z = data['groundtruth']
+
+    for method in data:
+        if method == 'groundtruth':
+            continue
+        query = data[method]
+        scores = []
         for k in n_neighbors:
-            A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
-            B = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
-            C = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
-            score_scvi.append(jaccard_score(A.toarray().flatten(), C.toarray().flatten()))
-            score_cascvi.append(jaccard_score(B.toarray().flatten(), C.toarray().flatten()))
-
+            A = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
+            B = kneighbors_graph(query, k, mode='connectivity', include_self=True)
+            scores.append(jaccard_score(B.toarray().flatten(), A.toarray().flatten()))
+        
         if plot:
-            plt.plot(n_neighbors, score_scvi, color='green', label='scVI', linestyle='dashed', linewidth=2, markersize=3, marker='+')
-            plt.plot(n_neighbors, score_cascvi, color='blue', label='cascVI', linestyle='dashed', linewidth=2, markersize=3, marker='+')
-            plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
-            plt.legend()
-            plt.grid()
-            plt.show()
+            plt.plot(n_neighbors, scores, label=method, linestyle='dashed', linewidth=2, markersize=3, marker='+')
 
-    if len(data) == 5:
-        query_z, query_scvi_z, query_scvi_z_2, query_cascvi_z, query_cascvi_z_2 = data
-        n_neighbors = range(2, max_neighbors)
-        score_scvi, score_scvi_2 = [], []
-        score_cascvi, score_cascvi_2 = [], []
-        for k in n_neighbors:
-            A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
-            B = kneighbors_graph(query_scvi_z_2, k, mode='connectivity', include_self=True)
-            C = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
-            D = kneighbors_graph(query_cascvi_z_2, k, mode='connectivity', include_self=True)
-            E = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
-            score_scvi.append(jaccard_score(A.toarray().flatten(), E.toarray().flatten()))
-            score_scvi_2.append(jaccard_score(B.toarray().flatten(), E.toarray().flatten()))
-            score_cascvi.append(jaccard_score(C.toarray().flatten(), E.toarray().flatten()))
-            score_cascvi_2.append(jaccard_score(D.toarray().flatten(), E.toarray().flatten()))
+    if plot:
+        plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
+        plt.legend()
+        plt.grid()
+        plt.show()
 
-        if plot:
-            plt.plot(n_neighbors, score_scvi, color='green', label='scVI + averaging', linestyle='dashed', linewidth=2,
-                     markersize=3, marker='+')
-            plt.plot(n_neighbors, score_scvi_2, color='red', label='scVI + Message Passing', linestyle='dashed', linewidth=2,
-                     markersize=3, marker='+')
-            plt.plot(n_neighbors, score_cascvi, color='blue', label='cascVI + Message Passing', linestyle='dashed', linewidth=2,
-                     markersize=3, marker='+')
-            plt.plot(n_neighbors, score_cascvi_2, color='orange', label='cascVI + averaging', linestyle='dashed', linewidth=2,
-                     markersize=3, marker='+')
+    if save_fig:
+        plt.savefig(save_fig)
 
-            plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
-            plt.legend()
-            plt.grid()
-            plt.show()
-
-        if save_fig:
-            plt.savefig(save_fig)
-
-    return score_scvi, score_cascvi
+    return scores
 
 def knn_purity_stratified(n_neighbors, tree, data, min_depth=2, plot=True, do_normalize=True):
     if do_normalize:
-        for i in range(len(data)):
-            data[i] = normalize(data[i])
-
-    full_latent, full_scvi_latent, full_scvi_latent_2, full_cascvi_latent, full_cascvi_latent_2 = data
+        for method in data:
+            data[method] = normalize(data[method])
 
     def get_nodes_depth(tree, d):
         nodes_index = []
@@ -211,41 +188,175 @@ def knn_purity_stratified(n_neighbors, tree, data, min_depth=2, plot=True, do_no
             if n.index in nodes_index:
                 query_nodes.append(X[n.index])
         return np.array(query_nodes)
+    
+    for method in data:
+        if method == 'groundtruth':
+            continue
+        query = data[method]
+        k = n_neighbors
+        max_depth = int(max([n.get_distance(tree) for n in tree.traverse('levelorder')]))
+        scores = []
+        for d in range(min_depth, max_depth):
 
-    k = n_neighbors
-    max_depth = int(max([n.get_distance(tree) for n in tree.traverse('levelorder')]))
-    score_scvi, score_scvi_2 = [], []
-    score_cascvi, score_cascvi_2 = [], []
-    for d in range(min_depth, max_depth):
-        nodes_index = get_nodes_depth(tree, d)
-        query_scvi_z = get_nodes(tree, nodes_index, full_scvi_latent)
-        query_scvi_z_2 = get_nodes(tree, nodes_index, full_scvi_latent_2)
-        query_cascvi_z = get_nodes(tree, nodes_index, full_cascvi_latent)
-        query_cascvi_z_2 = get_nodes(tree, nodes_index, full_cascvi_latent_2)
-        query_z = get_nodes(tree, nodes_index, full_latent)
-        A = kneighbors_graph(query_scvi_z, k, mode='connectivity', include_self=True)
-        B = kneighbors_graph(query_scvi_z_2, k, mode='connectivity', include_self=True)
-        C = kneighbors_graph(query_cascvi_z, k, mode='connectivity', include_self=True)
-        D = kneighbors_graph(query_cascvi_z_2, k, mode='connectivity', include_self=True)
-        E = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
-        score_scvi.append(jaccard_score(A.toarray().flatten(), E.toarray().flatten()))
-        score_scvi_2.append(jaccard_score(B.toarray().flatten(), E.toarray().flatten()))
-        score_cascvi.append(jaccard_score(C.toarray().flatten(), E.toarray().flatten()))
-        score_cascvi_2.append(jaccard_score(D.toarray().flatten(), E.toarray().flatten()))
+            nodes_index = get_nodes_depth(tree, d)
+            query_z = get_nodes(tree, nodes_index, data['groundtruth'])
+            query = get_nodes(tree, nodes_index, data[method])
+            
+            A = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
+            B = kneighbors_graph(query, k, mode='connectivity', include_self=True)
 
+            scores.append(jaccard_score(B.toarray().flatten(), A.toarray().flatten()))
+
+        if plot:
+            plt.plot(range(min_depth, max_depth), scores, label=method, linestyle='dashed', linewidth=2, markersize=12, marker='o')
+            
     if plot:
-        plt.plot(range(min_depth, max_depth), score_scvi, color='green', label='scVI + averaging', linestyle='dashed', linewidth=2, markersize=12, marker='o')
-        plt.plot(range(min_depth, max_depth), score_scvi_2, color='red', label='scVI + Message passing', linestyle='dashed', linewidth=2,
-                 markersize=12, marker='o')
-        plt.plot(range(min_depth, max_depth), score_cascvi, color='orange', label='cascVI + Message Passing', linestyle='dashed', linewidth=2, markersize=12, marker='o')
-        plt.plot(range(min_depth, max_depth), score_cascvi_2, color='blue', label='cascVI + Averaging', linestyle='dashed',
-                 linewidth=2, markersize=12, marker='o')
         plt.xlabel('# depth'), plt.ylabel("purity"), plt.title("k-nn purity")
         plt.legend()
         plt.grid()
         plt.show()
 
-    return score_scvi, score_scvi_2, score_cascvi, score_cascvi_2
+    return scores
+
+
+def update_metrics(metrics, data, normalization=None):
+    """
+    :param data: dict:imputations (one of them should have the key 'ground truth')
+    :param normalization: str: either "rank" or "quantile"
+    :param: metrics: list of metrics to be updated
+    :return:
+    """
+
+    if 'groundtruth' not in data:
+        raise ValueError('This call requires a groundtruth gene expression profile with the key "groundtruth" ')
+
+    corr_gg, corr_ss, mse, l1 = list(metrics.keys())[:4]
+    # gene-gene imputations
+    internal_X = data['groundtruth']
+    dim = internal_X.shape[1]
+    for method, imputed_X in data.items():
+        # Correlations
+        if method == 'groundtruth':
+            continue
+        for i in range(dim):
+            if normalization == 'rank':
+                data0 =  stats.rankdata(internal_X[:, i])
+                data1 = stats.rankdata(imputed_X[:, i])
+            else:
+                data0 = internal_X[:, i]
+                data1 = imputed_X[:, i]
+
+            metrics[corr_gg].append([method, stats.spearmanr(data1, data0)[0], stats.pearsonr(data1, data0)[0],
+                stats.kendalltau(data1, data0)[0]])
+    
+
+    # sample-sample imputations
+    internal_X = data['groundtruth'].T
+    N = internal_X.shape[0]
+    dim = internal_X.shape[1]
+    mse_scores = []
+    l1_scores = []
+    for method, imputed_X in data.items():
+        
+        if method == 'groundtruth':
+            continue
+
+        # Correlations
+        imputed_X = imputed_X.T
+        for i in range(dim):
+            if normalization == 'rank':
+                data0 =  stats.rankdata(internal_X[:, i])
+                data1 = stats.rankdata(imputed_X[:, i])
+            else:
+                data0 = internal_X[:, i]
+                data1 = imputed_X[:, i]
+
+            metrics[corr_ss].append([method, stats.spearmanr(data1, data0)[0], stats.pearsonr(data1, data0)[0],
+                stats.kendalltau(data1, data0)[0]])
+        
+        # MSE error
+        mse_scores.append(np.mean([mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]))
+
+        # L1 error
+        l1_scores.append(np.mean([manhattan_distances(internal_X[1].reshape(1, -1), imputed_X[1].reshape(1, -1)) for i in range(N)]))
+       
+    metrics[mse].append(mse_scores)
+    metrics[l1].append(l1_scores)
+
+def mean_variance_latent(tree, predictive_cov_z, imputed_avg_cov_z, imputed_cov_z):
+    mse_treevae = 0
+    mse_vae = 0
+    d = predictive_cov_z['0'].shape[0]
+    N = 0
+    for n in tree.traverse('levelorder'):
+        if not n.is_leaf():
+            true_cov = np.diag(predictive_cov_z[n.name])
+            vae_cov = imputed_avg_cov_z[n.name].cpu().numpy()
+            treevae_cov = imputed_cov_z[n.name] * np.ones((d))
+
+            mse_treevae += mean_squared_error(true_cov, treevae_cov)
+            mse_vae += mean_squared_error(true_cov, vae_cov)
+            N += 1
+    mse_treevae /= N
+    mse_vae /= N
+
+    return [mse_vae, mse_treevae]
+
+def mean_posterior_lik(tree, predictive_mean_z, imputed_avg_z, imputed_mean_z, predictive_cov_z, imputed_avg_cov_z, imputed_cov_z):
+    treevae_lik = 0
+    vae_lik = 0
+    d = predictive_cov_z['0'].shape[0]
+    N = 0
+    for n in tree.traverse('levelorder'):
+        if not n.is_leaf():
+            # mean
+            true_mean = predictive_mean_z[n.name].cpu().numpy() 
+            vae_mean = imputed_avg_z[n.name][0]
+            treevae_mean = imputed_mean_z[n.name].cpu().numpy()
+
+            # covariance
+            true_cov = np.diag(predictive_cov_z[n.name])
+            vae_cov = np.diag(imputed_avg_cov_z[n.name].cpu().numpy())
+            treevae_cov = np.diag(imputed_cov_z[n.name] * np.ones((d)))
+
+            sample_treevae = np.random.multivariate_normal(mean=treevae_mean,
+                                                            cov=treevae_cov)
+            sample_vae = np.random.multivariate_normal(mean=vae_mean,
+                                                        cov=vae_cov)
+
+            treevae_lik += multivariate_normal.logpdf(sample_treevae,
+                                                    true_mean,
+                                                    true_cov)
+            vae_lik += multivariate_normal.logpdf(sample_vae,
+                                                    true_mean,
+                                                    true_cov)
+            
+            N += 1
+
+    vae_lik /= N
+    treevae_lik /= N
+    return [vae_lik, treevae_lik]
+
+
+def report_results(metrics, save_path, columns2):
+    columns1 = ["Method", "Spearman CC", "Pearson CC", "Kendall Tau"]
+    columns2 = columns2
+    columns3 = ["gaussian VAE", "gaussian treeVAE"]
+    for metric, data in metrics.items():
+            if metric.startswith('corr'):
+                df = pd.DataFrame(data, columns=columns1)
+                df.to_csv(os.path.join(save_path, metric))
+            elif metric == 'MSE_var' or metric == 'Likelihood':
+                df = pd.DataFrame(data, columns=columns3)
+                df.to_csv(os.path.join(save_path, metric))
+            else:
+                df = pd.DataFrame(data, columns=columns2)
+                df.to_csv(os.path.join(save_path, metric))
+        
+            
+
+
+
 
 
 
