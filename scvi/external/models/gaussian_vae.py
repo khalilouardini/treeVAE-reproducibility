@@ -93,7 +93,7 @@ class GaussianVAE(nn.Module):
         """
         return [self.sample_from_posterior_z(x)]
 
-    def sample_from_posterior_z(self, x, give_mean=False, n_samples=5000):
+    def sample_from_posterior_z(self, x, give_mean=False, give_cov=False, n_samples=5000):
         """Samples the tensor of latent values from the posterior
 
         Parameters
@@ -117,7 +117,10 @@ class GaussianVAE(nn.Module):
             z = torch.mean(samples, dim=0)
         else:
             z = qz_m
-        return z
+        if give_cov:
+            return z, qz_v
+        else:
+            return z
 
     def inference(self, x, n_samples=1):
         """Helper function used in forward pass"""

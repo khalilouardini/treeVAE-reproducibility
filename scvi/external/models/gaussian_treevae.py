@@ -311,7 +311,7 @@ class GaussianTreeVAE(nn.Module):
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
 
-    def sample_from_posterior_z(self, x, give_mean=False, n_samples=5000):
+    def sample_from_posterior_z(self, x, give_mean=False, give_cov=False, n_samples=5000):
         """Samples the tensor of latent values from the posterior
 
         Parameters
@@ -335,7 +335,10 @@ class GaussianTreeVAE(nn.Module):
             z = torch.mean(samples, dim=0)
         else:
             z = qz_m
-        return z
+        if give_cov:
+            return z, qz_v
+        else:
+            return z
 
     def inference(self, x, n_samples=1):
         """Helper function used in forward pass"""
@@ -374,7 +377,7 @@ class GaussianTreeVAE(nn.Module):
         px_v = outputs["px_v"]
         z = outputs["z"]
 
-        self.encoder_variance.append(np.linalg.norm(qz_v.detach().numpy(), axis=1))
+        self.encoder_variance.append(np.linalg.norm(qz_v.detach().cpu().numpy(), axis=1))
         
         if self.use_MP:
             # Message passing likelihood

@@ -336,8 +336,8 @@ class LinearDecoderSCVI(nn.Module):
         use_batch_norm: bool = True,
         bias: bool = False,
     ):
-        super(LinearDecoderSCVI, self).__init__()
-
+        super().__init__()
+        
         # mean gamma
         self.factor_regressor = FCLayers(
             n_in=n_input,
@@ -372,8 +372,7 @@ class LinearDecoderSCVI(nn.Module):
         px_rate = torch.exp(library) * px_scale
         px_r = None
 
-        return px_scale, px_r, px_rate, px_dropout
-
+        return px_scale, raw_px_scale, px_rate, px_dropout
 
 # Decoder
 class Decoder(nn.Module):

@@ -180,9 +180,10 @@ class GaussianTreePosterior(GaussianPosterior):
     
     @torch.no_grad()
     def get_latent(self,
-             give_mean=False
+             give_mean=False,
+             give_cov=False
      ):
-        """Output posterior z mean or sample, batch index, and label
+        """Output posterior z mean or sample
 
         Parameters
         ----------
@@ -195,28 +196,34 @@ class GaussianTreePosterior(GaussianPosterior):
         -------
         latent
             low-dim representation
-        batch_indices
-            batch indicies corresponding to each cell
-        labels
-            label corresponding to each cell
-
         """
         latent = []
-        for tensors in self:
+        for tensors in self: 
             sample_batch, _, _, _, _ = tensors
-            latent += [
-                self.model.sample_from_posterior_z(
-                    sample_batch, give_mean=give_mean
-                ).cpu()
-            ]
-        return np.array(torch.cat(latent))
+            if give_cov:
+                z, qz_v = self.model.sample_from_posterior_z(
+                            sample_batch, give_mean=give_mean,
+                            give_cov=give_cov
+                )
+                latent += [z.cpu()]
+
+                return np.array(torch.cat(latent)), qz_v
+            else:
+                latent += [
+                    self.model.sample_from_posterior_z(
+                        sample_batch, give_mean=give_mean,
+                         give_cov=give_cov
+                    ).cpu()
+                ]
+                return np.array(torch.cat(latent))
 
     @torch.no_grad()
     def imputation_internal(self,
                             query_node,
                             z_averaging=None,
                             pp_averaging=None,
-                            known_latent=None
+                            known_latent=None,
+                            give_mean=False
                             ):
         """
         :param self:
@@ -246,12 +253,43 @@ class GaussianTreePosterior(GaussianPosterior):
             z_star = Normal(mu_star, torch.from_numpy(np.array([nu_star]))).sample((pp_averaging,))
             z_star = torch.mean(z_star, dim=0)
 
+        ## GPU
+        if self.use_cuda:
+            z_star = z_star.view(1, -1).float().to('cuda:0')
+        else:
+            z_star = z_star.view(1, -1).float()
+
         # 3. Decode latent vector x* ~ p(x*|z = z*)
-        p_m, p_v = self.model.decoder.forward(z_star.view(1, -1).float())
+        p_m, p_v = self.model.decoder.forward(z_star)
         data = Normal(p_m, p_v.sqrt()).sample((pp_averaging,)).cpu().numpy()
         data = np.mean(data, axis=0)
 
+        if give_mean:
+            return data, z_star, mu_star, nu_star
+            
         return data, z_star
+
+    @torch.no_grad()
+    def empirical_qz_v(self, n_samples, norm):
+        """
+        :return: empirical variance of the encoder
+        """
+
+        # Sample from posterior
+        latent = []
+        for n in range(n_samples):
+            latent.append(self.get_latent(give_mean=False))
+        latent = np.array(latent)
+
+        qz_v = np.var(latent,
+                       axis=0,
+                       dtype=np.float64)
+
+        if norm:
+            norm_qz_v = [np.linalg.norm(v) for v in qz_v]
+            return norm_qz_v
+
+        return qz_v
 
 
 class GaussianTreeTrainer(Trainer):

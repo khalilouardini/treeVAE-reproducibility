@@ -320,7 +320,7 @@ class TreeVAE(nn.Module):
         self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
         return (self.tree & query_node).mu, (self.tree & query_node).nu
 
-    def sample_from_posterior_z(self, x, give_mean=False, n_samples=5000):
+    def sample_from_posterior_z(self, x, give_mean=False, give_cov=False, n_samples=5000):
         """Samples the tensor of latent values from the posterior
 
         Parameters
@@ -338,13 +338,17 @@ class TreeVAE(nn.Module):
             tensor of shape ``(batch_size, n_latent)``
 
         """
+        x = torch.log(1 + x)
         qz_m, qz_v, z = self.z_encoder(x)
         if not give_mean:
             samples = Normal(qz_m, qz_v.sqrt()).sample([n_samples])
             z = torch.mean(samples, dim=0)
         else:
             z = qz_m
-        return z
+        if give_cov:
+            return z, qz_v
+        else:
+            return z
         
     def inference(self, x, n_samples=1):
         """Helper function used in forward pass

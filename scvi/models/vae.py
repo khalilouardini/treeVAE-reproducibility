@@ -12,7 +12,11 @@ from scvi.models.distributions import (
     NegativeBinomial,
     Poisson,
 )
-from scvi.models.modules import Encoder, DecoderSCVI, LinearDecoderSCVI
+
+import sys
+sys.path.append("..")
+
+from .modules import Encoder, DecoderSCVI, LinearDecoderSCVI
 from scvi.models.utils import one_hot
 
 from typing import Tuple, Dict
@@ -132,15 +136,14 @@ class VAE(nn.Module):
             )
         else:
             # linearly decoded VAE
-            if self.ldvae:
-                print("==== We will use a linear decoder ===")
-                self.decoder = LinearDecoderSCVI(
-                    n_input=n_latent,
-                    n_output=n_input,
-                    n_cat_list=[n_batch],
-                    use_batch_norm=False,
-                    bias=True
-                )
+            print("==== We will use a linear decoder ===")
+            self.decoder = LinearDecoderSCVI(
+                n_input=n_latent,
+                n_output=n_input,
+                n_cat_list=[n_batch],
+                use_batch_norm=False,
+                bias=True
+            )
 
     def get_latents(self, x, y=None) -> torch.Tensor:
         """Returns the result of ``sample_from_posterior_z`` inside a list
@@ -330,6 +333,10 @@ class VAE(nn.Module):
         px_scale, px_r, px_rate, px_dropout = self.decoder(
             self.dispersion, z, library, dec_batch_index, y
         )
+        #############   
+        if self.ldvae and self.reconstruction_loss=='poisson':
+            px_rate = torch.clamp(torch.exp(px_r), max=5000)
+
         if self.dispersion == "gene-label":
             px_r = F.linear(
                 one_hot(y, self.n_labels), self.px_r
@@ -400,6 +407,7 @@ class VAE(nn.Module):
             Normal(ql_m, torch.sqrt(ql_v)),
             Normal(local_l_mean, torch.sqrt(local_l_var)),
         ).sum(dim=1)
+
         kl_divergence = kl_divergence_z
 
         reconst_loss = self.get_reconstruction_loss(x, px_rate, px_r, px_dropout)

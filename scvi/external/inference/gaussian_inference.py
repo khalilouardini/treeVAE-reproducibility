@@ -58,7 +58,8 @@ class GaussianPosterior(Posterior):
 
     @torch.no_grad()
     def get_latent(self,
-             give_mean=False
+             give_mean=False,
+             give_cov=False
      ):
         """Output posterior z mean or sample, batch index, and label
 
@@ -80,14 +81,24 @@ class GaussianPosterior(Posterior):
 
         """
         latent = []
-        for tensors in self:
+        for tensors in self: 
             sample_batch, _, _, _, _ = tensors
-            latent += [
-                self.model.sample_from_posterior_z(
-                    sample_batch, give_mean=give_mean
-                ).cpu()
-            ]
-        return np.array(torch.cat(latent))
+            if give_cov:
+                z, qz_v = self.model.sample_from_posterior_z(
+                            sample_batch, give_mean=give_mean,
+                            give_cov=give_cov
+                )
+                latent += [z.cpu()]
+
+                return np.array(torch.cat(latent)), qz_v
+            else:
+                latent += [
+                    self.model.sample_from_posterior_z(
+                        sample_batch, give_mean=give_mean,
+                         give_cov=give_cov
+                    ).cpu()
+                ]
+                return np.array(torch.cat(latent))
 
     @torch.no_grad()
     def generate(
