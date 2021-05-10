@@ -381,7 +381,7 @@ class PPCA:
             samples_x = np.array([np.random.multivariate_normal(mean=self.W @ imputed_z_mp[n.name],
                                         cov=self.sigma) for i in range(50)])  
             imputed_mp[n.name] = np.mean(samples_x, axis=0)
-        return imputed_mp, imputed_z_mp
+        return imputed_mp, imputed_z_mp, predictive_mean_z, predictive_cov_z 
 
 
 

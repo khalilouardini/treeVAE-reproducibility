@@ -94,7 +94,7 @@ class Poisson_GLM:
 
         self.mu = np.clip(a=np.exp(self.z @ self.W.T + self.beta),
                                  a_min=0,
-                                 a_max=5000
+                                 a_max=1e5
                           )
 
         self.X = np.asarray(poisson(self.mu), dtype=np.float64)
@@ -172,7 +172,9 @@ class Poisson_GLM:
 
     def binomial_thinning(self, p=0.5):
         self.X = binomial(self.X.astype(int), p)
-
+        #self.mu *= p
+        # 
+ 
     def is_pos_def(self):
         return np.all(np.linalg.eigvals(self.covariance) > 0), np.all(np.linalg.eigvals(self.leaves_covariance) > 0)
 
