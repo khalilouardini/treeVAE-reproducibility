@@ -8,6 +8,7 @@ from torch.distributions import Normal
 from .modules import Encoder, Decoder, LinearDecoder, GaussianDecoder, GaussianLinearDecoder
 import numpy as np
 from torch.distributions import Normal, kl_divergence
+import copy
 
 torch.backends.cudnn.benchmark = True
 
@@ -113,6 +114,8 @@ class GaussianTreeVAE(nn.Module):
         if type(prior_t) == float:
             self.prior_t = {}
             for n in self.tree.traverse('levelorder'):
+                if n.is_root():
+                    self.prior_t[n.name] = 0.0
                 self.prior_t[n.name] = prior_t
             self.prior_t['prior_root'] = 1.0
         else:
@@ -293,22 +296,51 @@ class GaussianTreeVAE(nn.Module):
         """
         :param query_node: (string) barcode of a query node
                evidence: (ndarray) observation values at the leaves (used as an initialization)
+               reroot_prior_t: (dict) branch lengths dictionnary of the rerooted tree
         :return: the expectation and the variance for the posterior (distribution query_node | observations)
         """
 
-        root_node = self.tree & self.root   
+        root_node = self.tree & self.root
 
+        # computing branch length dictionnary of rerooted tree:
+        def reroot_tree(branch_length, node):
+            # path from node to root
+            path = []
+            internal_node = copy.copy(node)
+            while internal_node.up:
+                path.append(internal_node)
+                internal_node = internal_node.up
+
+            # New branch length dictionnary
+            new_branch_length = copy.copy(branch_length)
+            new_branch_length[node.name] = 0.0
+
+            # correct branch lengths to make 'node' the root
+            for i in range(len(path) - 1):
+                current_node = path[i].name
+                next_node = path[i+1].name
+                new_branch_length[next_node] = branch_length[current_node]
+
+            return new_branch_length
+        
+        # Update branch length
+        old_prior_t = copy.copy(self.prior_t)
+        self.prior_t = reroot_tree(self.prior_t, query_node)
+
+        # Message Passing
         self.initialize_visit()
-
         if evidence is not None:
             self.initialize_messages(evidence,
                                      self.barcodes,
-                                     self.n_latent)
+                                     self.n_latent
+                                     )
 
+        self.perform_message_passing(self.tree & query_node.name, len(root_node.mu), True)
 
+        # Update branch length 
+        self.prior_t = old_prior_t
 
-        self.perform_message_passing((self.tree & query_node), len(root_node.mu), True)
-        return (self.tree & query_node).mu, (self.tree & query_node).nu
+        return (self.tree & query_node.name).mu, (self.tree & query_node.name).nu
 
 
     def sample_from_posterior_z(self, x, give_mean=False, give_cov=False, n_samples=5000):
