@@ -1,7 +1,9 @@
 from ete3 import Tree
+from matplotlib.pyplot import axis
 import numpy as np
 import torch
-from torch.distributions import Poisson, Normal
+from torch.distributions import Poisson, Normal, Gamma
+from ..models.distributions import NegativeBinomial
 
 def avg_weighted_baseline(tree, weighted, X, rounding):
     """
@@ -119,7 +121,8 @@ def avg_baseline_z(tree,
                     gaussian=True,
                     known_latent=False,
                     latent=None,
-                    use_cuda=False
+                    use_cuda=False,
+                    give_cov=False
                     ):
     """
     :param tree: ete3 phylogenetic tree
@@ -152,7 +155,8 @@ def avg_baseline_z(tree,
     for n in tree.traverse('levelorder'):
         if n.is_leaf():
             n.add_features(latent=latents[:, idx])
-            n.add_features(cov=qz_v[idx])
+            if give_cov:
+                n.add_features(cov=qz_v[idx])
             idx += 1
 
     # Averaging
@@ -177,11 +181,13 @@ def avg_baseline_z(tree,
                         raise ValueError("Negative branch length value detected in the tree")
                 else:
                     mean_z += l.latent
-                cov_z += l.cov
+                if give_cov:
+                    cov_z += l.cov
                 
             mean_z /= len(sub_leaves)
             imputed_z[n.name] = mean_z
-            imputed_cov_z[n.name] = cov_z 
+            if give_cov:
+                imputed_cov_z[n.name] = cov_z / (len(sub_leaves))**2
 
             ## GPU
             library = torch.from_numpy(np.array([np.log(library_size)]))
@@ -214,13 +220,17 @@ def avg_baseline_z(tree,
                                               a_min=-1e8
                                               )
                 else:
-                    p_m, p_v = posterior.model.decoder(mean_z)                                                               
-                    imputed[n.name] = np.clip(a=Normal(p_m, p_v.sqrt()).sample().cpu().numpy(),
+                    p_m, p_v = posterior.model.decoder(mean_z)
+                    data = torch.mean(Normal(p_m, p_v.sqrt()).sample((40,)), axis=0)                                                               
+                    imputed[n.name] = np.clip(a=data.cpu().numpy(),
                                              a_max=1e8,
                                              a_min=-1e8
                                              )
+    if give_cov:
+        return imputed, imputed_z, imputed_cov_z
+    else:
+        return imputed, imputed_z
 
-    return imputed, imputed_z, imputed_cov_z
 
 
 @torch.no_grad()
@@ -230,7 +240,9 @@ def scvi_baseline_z(tree,
                     weighted=True,
                     n_samples_z=None,
                     library_size=10000,
-                    use_cuda=False):
+                    use_cuda=False,
+                    known_latent=False,
+                    latent=None):
     """
     :param tree: ete3 phylogenetic tree
     :param posterior: scVI posterior object
@@ -245,7 +257,11 @@ def scvi_baseline_z(tree,
     imputed_z = {}
 
     # Posterior
-    latents = np.array([posterior.get_latent()[0] for i in range(n_samples_z)])
+    if known_latent:
+        latents = latent
+        n_samples_z = latents.shape[0]
+    else:
+        latents = np.array([posterior.get_latent()[0] for i in range(n_samples_z)])
     D = latents.shape[2]
 
     # Initialize
@@ -297,11 +313,24 @@ def scvi_baseline_z(tree,
                 if model.reconstruction_loss=='poisson' and model.ldvae==True:
                     px_rate = px_r
 
-            l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e5)
+                elif model.reconstruction_loss=='nb':
+                    dispersion = torch.exp(model.px_r)
 
-            data = torch.mean(Poisson(l_train).sample((50,)), axis=0).cpu().numpy()
-
-            imputed[n.name] = data
+            if model.reconstruction_loss=='poisson':
+                #l_train = torch.clamp(px_rate, max=1e5) 
+                l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+                data = torch.mean(Poisson(l_train).sample((50,)), axis=0).cpu().numpy()
+                imputed[n.name] = np.clip(a=data,
+                                            a_max=1e8,
+                                            a_min=-1e8
+                                            )
+                #imputed[n.name] = Poisson(l_train).sample().cpu().numpy()
+                
+            elif model.reconstruction_loss=='nb':
+                #p = px_rate / (px_rate + dispersion)
+                #l_train = Gamma(dispersion, (1 - p) / p).sample()
+                imputed[n.name] = NegativeBinomial(mu=px_rate, theta=dispersion).sample((200,)).cpu().numpy()
+                #Poisson(l_train).sample().cpu().numpy()
 
     return imputed, imputed_z
 
@@ -345,7 +374,7 @@ def construct_latent(tree, leaves_z, internal_z):
     full_latent = []
     idx = 0
 
-    for i, n in enumerate(tree.traverse()):
+    for i, n in enumerate(tree.traverse('levelorder')):
         if n.is_leaf():
             full_latent.append(leaves_z[idx])
             idx += 1

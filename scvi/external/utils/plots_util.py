@@ -354,7 +354,7 @@ def training_dashboard(trainer, encoder_variance):
     ax6.legend([['encoder variance']], loc='best', borderpad=4, fontsize=22)
 
     plt.suptitle('Training dashboard', fontsize=48)
-    plt.show()
+    plt.savefig('training_cascvi.png')
 
 def plot_common_ancestor(tree, z, embedding='umap', give_labels=False):
     ##

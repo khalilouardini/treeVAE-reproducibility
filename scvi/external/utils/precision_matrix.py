@@ -55,7 +55,8 @@ def precision_matrix(tree, d, branch_length):
     else:
         for i in parents:
             pi_ind = parents[i]
-            t = 1 / branch_length[str(pi_ind)]
+            #t = 1 / branch_length[str(pi_ind)]
+            t = 1 / branch_length[str(i)]
             inverse_covariance[i * d: (i + 1) * d, i * d: (i + 1) * d] += np.identity(d) * t
             inverse_covariance[pi_ind * d: (pi_ind + 1) * d, pi_ind * d: (pi_ind + 1) * d] += np.identity(d) * t
             inverse_covariance[pi_ind * d: (pi_ind + 1) * d, i * d: (i + 1) * d] += - np.identity(d) * t
@@ -103,9 +104,9 @@ def marginalize_covariance(full_covariance, delete_list, d):
                 for f in foo:
                     to_delete[i].append(f)
     if len(delete_list) == 1:
-        x = np.delete(covariance, to_delete, 0)
+        x = np.delete(full_covariance, to_delete, 0)
         marg_covariance = np.delete(x, to_delete, 1)
     else:
-        x = np.delete(covariance, to_delete[0], 0)
+        x = np.delete(full_covariance, to_delete[0], 0)
         marg_covariance = np.delete(x, to_delete[1], 1)
     return marg_covariance

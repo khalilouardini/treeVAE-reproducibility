@@ -119,6 +119,7 @@ def mse(data, metric):
     # groundtruth and imputations
     internal_X = data['groundtruth']
     N = internal_X.shape[0]
+    D = N = internal_X.shape[1]
     scores = []
     stds = []
     
@@ -128,7 +129,7 @@ def mse(data, metric):
         if metric == 'MSE':
             mse_scores = [mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]
         elif metric == 'L1':
-            mse_scores = [manhattan_distances(internal_X[1].reshape(1, -1), imputed_X[1].reshape(1, -1)) for i in range(N)]
+            mse_scores = [manhattan_distances(internal_X[i].reshape(1, -1), imputed_X[i].reshape(1, -1)) / D for i in range(N)]
         scores.append(np.mean(mse_scores))
         stds.append(np.std(mse_scores))
     
@@ -146,27 +147,29 @@ def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None)
     n_neighbors = range(2, max_neighbors)
     query_z = data['groundtruth']
 
+    scores = {}
     for method in data:
         if method == 'groundtruth':
             continue
         query = data[method]
-        scores = []
+        scores[method] = []
         for k in n_neighbors:
             A = kneighbors_graph(query_z, k, mode='connectivity', include_self=True)
             B = kneighbors_graph(query, k, mode='connectivity', include_self=True)
-            scores.append(jaccard_score(B.toarray().flatten(), A.toarray().flatten()))
+            s = jaccard_score(B.toarray().flatten(), A.toarray().flatten())
+            scores[method].append(s)
         
         if plot:
-            plt.plot(n_neighbors, scores, label=method, linestyle='dashed', linewidth=2, markersize=3, marker='+')
+            plt.plot(n_neighbors, scores[method], label=method, linestyle='dashed', linewidth=2, markersize=3, marker='+')
+
+    plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
+    plt.legend()
+    plt.grid()
 
     if plot:
-        plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
-        plt.legend()
-        plt.grid()
         plt.show()
-
-    if save_fig:
-        plt.savefig(save_fig)
+        if save_fig:
+            plt.savefig(save_fig)
 
     return scores
 
@@ -278,46 +281,47 @@ def update_metrics(metrics, data, normalization=None):
         mse_scores.append(np.mean([mean_squared_error(internal_X[i], imputed_X[i]) for i in range(N)]))
 
         # L1 error
-        l1_scores.append(np.mean([manhattan_distances(internal_X[1].reshape(1, -1), imputed_X[1].reshape(1, -1)) for i in range(N)]))
+        l1_scores.append(np.mean([manhattan_distances(internal_X[i].reshape(1, -1), imputed_X[i].reshape(1, -1)) / dim for i in range(N)]))
        
     metrics[mse].append(mse_scores)
     metrics[l1].append(l1_scores)
 
-def mean_variance_latent(tree, predictive_cov_z, imputed_avg_cov_z, imputed_cov_z):
+def error_latent(tree, predictive_z, imputed_avg_z, imputed_z, do_variance=False):
     mse_treevae = 0
     mse_vae = 0
-    d = predictive_cov_z['0'].shape[0]
     N = 0
     for n in tree.traverse('levelorder'):
         if not n.is_leaf():
-            true_cov = np.diag(predictive_cov_z[n.name])
-            vae_cov = imputed_avg_cov_z[n.name].cpu().numpy()
-            treevae_cov = imputed_cov_z[n.name] * np.ones((d))
+            if do_variance:
+                true_cov = predictive_z[n.name]
+                vae_cov = imputed_avg_z[n.name].cpu().numpy()
+                treevae_cov = imputed_z[n.name]
 
-            mse_treevae += mean_squared_error(true_cov, treevae_cov)
-            mse_vae += mean_squared_error(true_cov, vae_cov)
+                mse_treevae += mean_squared_error(true_cov, treevae_cov)
+                mse_vae += mean_squared_error(true_cov, vae_cov)
+            else:
+                mse_treevae += mean_squared_error(predictive_z[n.name], imputed_z[n.name])
+                mse_vae += mean_squared_error(predictive_z[n.name], imputed_avg_z[n.name][0])
             N += 1
     mse_treevae /= N
     mse_vae /= N
 
-    return [mse_vae, mse_treevae]
+    return [mse_treevae, mse_vae]
 
 def mean_posterior_lik(tree, predictive_mean_z, imputed_avg_z, imputed_mean_z, predictive_cov_z, imputed_avg_cov_z, imputed_cov_z):
     treevae_lik = 0
     vae_lik = 0
-    d = predictive_cov_z['0'].shape[0]
     N = 0
     for n in tree.traverse('levelorder'):
         if not n.is_leaf():
             # mean
-            true_mean = predictive_mean_z[n.name].cpu().numpy() 
+            true_mean = predictive_mean_z[n.name]
             vae_mean = imputed_avg_z[n.name][0]
-            treevae_mean = imputed_mean_z[n.name].cpu().numpy()
-
+            treevae_mean = imputed_mean_z[n.name]
             # covariance
             true_cov = np.diag(predictive_cov_z[n.name])
             vae_cov = np.diag(imputed_avg_cov_z[n.name].cpu().numpy())
-            treevae_cov = np.diag(imputed_cov_z[n.name] * np.ones((d)))
+            treevae_cov = np.diag(imputed_cov_z[n.name])
 
             sample_treevae = np.random.multivariate_normal(mean=treevae_mean,
                                                             cov=treevae_cov)
@@ -346,7 +350,7 @@ def report_results(metrics, save_path, columns2):
             if metric.startswith('corr'):
                 df = pd.DataFrame(data, columns=columns1)
                 df.to_csv(os.path.join(save_path, metric))
-            elif metric == 'MSE_var' or metric == 'Likelihood':
+            elif (metric == 'MSE_var') or (metric == 'MSE_mean') or (metric == 'Likelihood') or (metric == 'Cross_Entropy'):
                 df = pd.DataFrame(data, columns=columns3)
                 df.to_csv(os.path.join(save_path, metric))
             else:
