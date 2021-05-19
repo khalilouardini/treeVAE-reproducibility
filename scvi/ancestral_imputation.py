@@ -26,8 +26,8 @@ from inference import posterior
 
 # Utils
 from external.utils.data_util import get_leaves, get_internal
-from external.utils.metrics import correlations, mse, update_metrics, report_results
-from external.utils.baselines import avg_baseline_z, scvi_baseline_z, avg_weighted_baseline
+from external.utils.metrics import correlations, mse, update_metrics, report_results, knn_purity
+from external.utils.baselines import avg_baseline_z, scvi_baseline_z, avg_weighted_baseline, construct_latent
 
 class Ancestral_Imputation():
 
@@ -73,6 +73,7 @@ class Ancestral_Imputation():
         # Models
         self.treevae = None
         self.vae = None
+
         # neural network parameters
         self.n_hidden = n_hidden
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
@@ -83,13 +84,12 @@ class Ancestral_Imputation():
         else:
             self.branch_length = {}
             for i, n in enumerate(self.tree.traverse('levelorder')):
-                if not n.is_leaf():
-                    n.name = str(i)
+                n.name = str(i)
                 n.add_features(index=i)
-                if n.name == '0':
-                    self.branch_length[n.name] = 0.1
-                    continue
-                self.branch_length[n.name] = n.dist
+                if n.is_root():
+                    self.branch_length[n.name] = 0.0
+                else:
+                    self.branch_length[n.name] = n.dist
             self.branch_length['prior_root'] = 1.0
 
 
@@ -103,13 +103,14 @@ class Ancestral_Imputation():
                             self.n_genes,
                             self.latent,
                             False, False,
-                            self.branch_length
+                            self.branch_length,
+                            1.0
                             )
         self.glm.simulate_latent()
-        self.glm.simulate_ge()
+        self.glm.simulate_ge(negative_binomial=False)
 
         # Quality Control (i.e Gene Filtering)
-        #self.glm.gene_qc()
+        self.glm.gene_qc()
 
         if self.bin_thin < 1:
             self.glm.binomial_thinning(p=self.bin_thin)
@@ -120,6 +121,8 @@ class Ancestral_Imputation():
         self.leaves_X, _, _ = get_leaves(self.glm.X, self.glm.mu, self.tree)
         # internal nodes data
         self.internal_X, _, _ = get_internal(self.glm.X, self.glm.mu, self.tree)
+        # Latent space
+        self.leaves_z, _, _ = get_leaves(self.glm.z, self.glm.mu, self.tree)
 
     def fit_cascvi(self):
         """
@@ -130,15 +133,15 @@ class Ancestral_Imputation():
         adata = AnnData(self.leaves_X)
         leaves = [n for n in tree.traverse('levelorder') if n.is_leaf()]
         adata.obs_names = [n.name for n in leaves]
-        scvi_dataset = AnnDatasetFromAnnData(adata)
+        scvi_dataset = AnnDatasetFromAnnData(adata, filtering=False)
         scvi_dataset.initialize_cell_attribute('barcodes', adata.obs_names)
 
         # treedataset
         tree_bis = copy.deepcopy(self.tree)
-        self.tree_dataset = TreeDataset(scvi_dataset, tree=tree_bis)
+        self.tree_dataset = TreeDataset(scvi_dataset, tree=tree_bis, filtering=False)
 
         # treeVAE
-        self.treevae = TreeVAE(self.n_genes,
+        self.treevae = TreeVAE(self.tree_dataset.nb_genes,
                       tree=self.tree_dataset.tree,
                       n_latent=self.latent,
                       n_hidden=self.n_hidden,
@@ -162,7 +165,7 @@ class Ancestral_Imputation():
         )
 
         # training the VAE
-        tree_trainer.train(n_epochs=self.n_epochs,
+        tree_trainer.train(n_epochs=self.n_epochs+300,
                       lr=self.lr
                       )
 
@@ -179,7 +182,7 @@ class Ancestral_Imputation():
         gene_dataset = GeneExpressionDataset()
         gene_dataset.populate_from_data(self.leaves_X)
 
-        self.vae = VAE(self.n_genes,
+        self.vae = VAE(gene_dataset.nb_genes,
                        n_batch=False,
                        n_hidden=self.n_hidden,
                        n_layers=1,
@@ -218,12 +221,13 @@ class Ancestral_Imputation():
         imputed_z = {}
         for n in self.tree.traverse('levelorder'):
             if not n.is_leaf():
-                imputed[n.name], imputed_z[n.name] = self.tree_posterior.imputation_internal(n.name,
+                imputed[n.name], z = self.tree_posterior.imputation_internal(n,
                                                                                     give_mean=False,
                                                                                     library_size=empirical_l
                                                                                     )
+                imputed_z[n.name] = z
         imputed_X = [x for x in imputed.values()]
-        imputed_X = np.array(imputed_X).reshape(-1, self.n_genes)
+        imputed_X = np.array(imputed_X).reshape(-1, self.glm.X.shape[1])
 
         # 2. Baseline1: Average baseline
         imputed_avg = avg_weighted_baseline(tree=self.tree, 
@@ -231,7 +235,7 @@ class Ancestral_Imputation():
                                             X=self.glm.X, 
                                             rounding=True
                                             )
-        avg_X = np.array([x for x in imputed_avg.values()]).reshape(-1, self.n_genes)
+        avg_X = np.array([x for x in imputed_avg.values()]).reshape(-1, self.glm.X.shape[1])
         internal_avg_X, _, _ = get_internal(avg_X, self.glm.mu, self.tree)
 
         # 3. Baseline 2: Decoded averaged latent space
@@ -240,43 +244,65 @@ class Ancestral_Imputation():
                                                         posterior=self.posterior,
                                                         weighted=False,
                                                         n_samples_z=1,
-                                                        library_size=empirical_l
+                                                        library_size=empirical_l,
+                                                        use_cuda=self.use_cuda
                                                         )
-        internal_scvi_X = np.array([x for x in imputed_scvi.values()]).reshape(-1, self.n_genes)
+        internal_scvi_X = np.array([x for x in imputed_scvi.values()]).reshape(-1, self.glm.X.shape[1])
 
-        #4. Baseline 3: MP Oracle
-        imputed_oracle = {}
-        for n in self.tree.traverse('levelorder'):
-            if not n.is_leaf():
-                _, z_temp = self.tree_posterior.imputation_internal(n.name,
-                                                            give_mean=False,
-                                                            library_size=empirical_l,
-                                                            known_latent=self.leaves_z
-                )
-
-                mu_z = np.clip(a=np.exp(self.glm.W @ z_temp.cpu().numpy() + self.glm.beta),
-                                a_min=0,
-                                a_max=1e8
-                                )
-                samples = np.array([np.random.poisson(mu_z) for i in range(100)])
-                imputed_oracle[n.name] = np.clip(a=np.mean(samples, axis=0),
-                                                a_min=0,
-                                                a_max=1e8
-                                                )
-        internal_oracle_X = np.array([x for x in imputed_oracle.values()]).reshape(-1, self.n_genes)
 
         # Gene-gene correlations
         # Normalizing data
-        norm_internal_X = sc.pp.normalize_total(AnnData(self.internal_X), target_sum=1e4, inplace=False)['X'] 
-        norm_scvi_X = sc.pp.normalize_total(AnnData(internal_scvi_X), target_sum=1e4, inplace=False)['X']
-        norm_avg_X = sc.pp.normalize_total(AnnData(internal_avg_X), target_sum=1e4, inplace=False)['X']
-        norm_imputed_X = sc.pp.normalize_total(AnnData(imputed_X), target_sum=1e4, inplace=False)['X']
-        norm_oracle_X = sc.pp.normalize_total(AnnData(internal_oracle_X), target_sum=1e4, inplace=False)['X']
+        norm_internal_X = sc.pp.normalize_total(AnnData(self.internal_X), target_sum=1e6, inplace=False)['X'] 
+        norm_scvi_X = sc.pp.normalize_total(AnnData(internal_scvi_X), target_sum=1e6, inplace=False)['X']
+        norm_avg_X = sc.pp.normalize_total(AnnData(internal_avg_X), target_sum=1e6, inplace=False)['X']
+        norm_imputed_X = sc.pp.normalize_total(AnnData(imputed_X), target_sum=1e6, inplace=False)['X']
+
+        # 4.. Cross Entropy 
+        vae_latent = self.posterior.get_latent()[0]
+        treevae_latent = self.tree_posterior.get_latent()
+        #--> cross entropy prior | guassian VAE
+        self.treevae.initialize_visit()
+        self.treevae.initialize_messages(vae_latent, self.tree_dataset.barcodes, self.latent)
+        self.treevae.perform_message_passing((self.treevae.tree & self.treevae.root), self.latent, False)
+        ce_vae = self.treevae.aggregate_messages_into_leaves_likelihood(self.latent, add_prior=True).item()
+        #--> cross entropy prior | guassianTreeVAE
+        self.treevae.initialize_visit()
+        self.treevae.initialize_messages(treevae_latent, self.tree_dataset.barcodes, self.latent)
+        self.treevae.perform_message_passing((self.treevae.tree & self.treevae.root), self.latent, False)
+        ce_treevae = self.treevae.aggregate_messages_into_leaves_likelihood(self.latent, add_prior=True).item()
+
+        ce_metrics = [ce_vae, ce_treevae]
+
+        # 5. k-NN purity 
+        full_treevae_latent = construct_latent(self.tree, treevae_latent, imputed_z)
+        full_vae_latent = construct_latent(self.tree, vae_latent, imputed_scvi_z)
+
+        internal_z, _, _ = get_internal(self.glm.z, self.glm.mu, self.tree)
+        internal_vae_z, _, _ = get_internal(full_vae_latent, self.glm.mu, self.tree)
+        internal_treevae_z, _, _ = get_internal(full_treevae_latent, self.glm.mu, self.tree)
+
+        max_neighbors = 30
+        neighbors = list(range(2, max_neighbors))
+
+        # Leaves
+        data = {'groundtruth': self.leaves_z, 'scVI': vae_latent, 'cascVI': treevae_latent}
+        scores = knn_purity(max_neighbors=max_neighbors, data=data, plot=False)      
+        purity = pd.DataFrame(data={'K':neighbors, 'scVI': scores['scVI'], 'cascVI': scores['cascVI']})
+        # Internal
+        data = {'groundtruth': internal_z, 'scVI': internal_vae_z, 'cascVI': internal_treevae_z}
+        scores = knn_purity(max_neighbors=max_neighbors, data=data, plot=False)      
+        purity_internal = pd.DataFrame(data={'K':neighbors, 'scVI': scores['scVI'], 'cascVI': scores['cascVI']})
+        # Full
+        data = {'groundtruth': self.glm.z, 'scVI': full_vae_latent, 'cascVI': full_treevae_latent}
+        scores = knn_purity(max_neighbors=max_neighbors, data=data, plot=False)      
+        purity_full = pd.DataFrame(data={'K':neighbors, 'scVI': scores['scVI'], 'cascVI': scores['cascVI']})
+        
+        data_purity_metrics = [purity, purity_internal, purity_full]
 
         data = {'groundtruth': norm_internal_X, 'cascVI': norm_imputed_X, 'scVI': norm_scvi_X, 
-                'Average': norm_avg_X, 'Oracle MP': norm_oracle_X}
+                'Average': norm_avg_X}
         
-        return data
+        return data, ce_metrics, data_purity_metrics
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -290,9 +316,9 @@ if __name__ == '__main__':
                         help='whether to use a fixed branch length in the simulations (Gaussian Random Walk)')
     parser.add_argument('--binomial_thinning', type=float, default=0.1,
                     help='proportion of binomial thinning in the Poisson simulations')
-    parser.add_argument('--use_cuda', type=bool, default=False,
+    parser.add_argument('--use_cuda', type=bool, default=True,
                         help='Whether to use GPUs')
-    parser.add_argument('--n_epochs', type=int, default=800,
+    parser.add_argument('--n_epochs', type=int, default=600,
                         help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-3,
                         help='learning rate')
@@ -302,13 +328,13 @@ if __name__ == '__main__':
                         help='dimension of latent space')
     parser.add_argument('--n_genes', type=int, default=1000,
                         help='Number of simulated genes')
-    parser.add_argument('--simulation', type=str, default='poisson_glm', choices=['poisson_glm'],
+    parser.add_argument('--simulation', type=str, default='poisson_glm', choices=['poisson_glm', 'negative_binomial'],
                         help='Simulation framework')
     parser.add_argument('--n_hidden', type=int, default=128,
                         help='Number hidden units in the VAE')
     parser.add_argument('--seed', type=int, default=42,
                         help='random_seed')
-    parser.add_argument('--n_epochs_kl_warmup', type=int, default=200,
+    parser.add_argument('--n_epochs_kl_warmup', type=int, default=150,
                         help='Number of warm up epochs before introducing KL regularization in the VAE')
 
     #Parameters
@@ -342,12 +368,14 @@ if __name__ == '__main__':
     tree_folder = os.path.join(tree_folder, fitness)
     tree_paths = [os.path.join(tree_folder, f) for f in os.listdir(tree_folder)]
 
-    metrics = {'correlations_ss': [], 'correlations_gg': [], 'MSE': [], 'L1': []}
+    metrics = {'correlations_ss': [], 'correlations_gg': [], 'MSE': [], 'L1': [], 'Cross_Entropy': []}
+
+    purity, purity_internal, purity_full = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     for tree_path in tree_paths:
         tree = Tree(tree_path, 1)
 
-        print("========  Gaussian Ancestral Imputation  ======== \n")
+        print("======== Ancestral Imputation  ======== \n")
         exp = Ancestral_Imputation(
                                 tree=tree,
                                 fixed_branch_length=fixed_branch_length,
@@ -375,16 +403,30 @@ if __name__ == '__main__':
         exp.fit_cascvi(), print('\n')
 
         print("III: Evalutation")
-        data = exp.evaluation()
+        data, ce_metrics, data_purity_metrics = exp.evaluation()
         columns2 = list(data.keys())[1:]
+
+        # Update metrics
         update_metrics(metrics=metrics,
                         data=data,
                         normalization=None)
 
+        # update secondary metrics
+        metrics['Cross_Entropy'].append(ce_metrics)
+
+        # Purity metrics
+        df_purity, df_purity_internal, df_purity_full = data_purity_metrics
+        purity = purity.append(df_purity)
+        purity_internal = purity_internal.append(df_purity_internal)
+        purity_full = purity_full.append(df_purity_full)
+
     results_dir = 'results/poisson'
     if not os.path.exists(results_dir):
         os.mkdir(results_dir)
-    next_dir = os.path.join(results_dir, str(n_cells_tree))
+    next_dir = os.path.join(results_dir, 'lambda'+str(lambda_))
+    if not os.path.exists(next_dir):
+        os.mkdir(next_dir)
+    next_dir = os.path.join(next_dir, str(n_cells_tree))
     if not os.path.exists(next_dir):
         os.mkdir(next_dir)
     next_dir = os.path.join(next_dir, fitness)
@@ -399,8 +441,10 @@ if __name__ == '__main__':
                   columns2=columns2
                   )
 
-    
-
+    # Save purity
+    purity.to_csv(os.path.join(next_dir, 'purity_leaves'))
+    purity_internal.to_csv(os.path.join(next_dir, 'purity_internal'))
+    purity_full.to_csv(os.path.join(next_dir, 'purity_full'))
 
 
 
