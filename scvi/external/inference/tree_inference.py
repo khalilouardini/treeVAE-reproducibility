@@ -25,7 +25,9 @@ from scvi.dataset.tree import TreeDataset
 from scvi.inference import Trainer
 from scvi.inference.posterior import Posterior
 from scvi.models.treevae import TreeVAE
-from torch.distributions import Poisson, Gamma, Bernoulli, Normal, NegativeBinomial
+from torch.distributions import Poisson, Gamma, Bernoulli, Normal
+from ..models.distributions import NegativeBinomial
+
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +136,7 @@ class TreePosterior(Posterior):
             if self.model.use_MP:
                 elbo -= lambda_ * mp_lik
 
-        n_samples = len(self.barcodes)
+        n_samples = sample_batch.shape[0]
         elbo /= n_samples
         return elbo
 
@@ -276,7 +278,7 @@ class TreePosterior(Posterior):
                 l_train = torch.clamp(l_train, max=1e8)
                 dist = distributions.Poisson(l_train)  # Shape : (n_samples, n_cells_batch, n_genes)
             elif self.model.reconstruction_loss == "nb":
-                dist = distributions.NegativeBinomial(mu=px_rate, theta=px_r)
+                dist = NegativeBinomial(mu=px_rate, theta=px_r)
             else:
                 raise ValueError("{} reconstruction error not handled right now".format(self.model.reconstruction_loss))
             gene_expressions = dist.sample().permute([1, 2, 0])  # Shape : (n_cells_batch, n_genes, n_samples)
@@ -403,21 +405,22 @@ class TreePosterior(Posterior):
                                                             )
             px_rate = torch.exp(raw_px_scale)
 
-        if not self.model.ldvae and px_r:
-            dispersion = px_r
-        else:
+        if (self.model.dispersion) == 'gene' and not (self.model.ldvae):
             dispersion = torch.exp(self.model.px_r)
 
         # Sampling from NB
         if self.model.reconstruction_loss == "nb":
-            p = px_rate / (px_rate + dispersion)
-            l_train = Gamma(dispersion, (1 - p) / p).sample()
-            data = NegativeBinomial(mu=px_rate, theta=px_r).sample().cpu().numpy()[0]
+            #p = px_rate / (px_rate + dispersion)
+            #l_train = Gamma(dispersion, (1 - p) / p).sample()
+            #data = Poisson(l_train).sample().cpu().numpy()[0]
+            data = NegativeBinomial(mu=px_rate, theta=dispersion).sample((200,)).cpu().numpy()
+            data = torch.mean(data, axis=0)
 
         # Sampling from Poisson
         if self.model.reconstruction_loss == "poisson":
-            l_train = torch.clamp(px_rate, max=1e5)
-            data = torch.mean((Poisson(l_train).sample((200,))), axis=0).cpu().numpy()[0]
+            #l_train = torch.clamp(px_rate, max=1e5)
+            l_train = torch.clamp(torch.mean(px_rate, axis=0), max=1e8)
+            data = torch.mean(Poisson(l_train).sample((100,)), axis=0).cpu().numpy()
             data = np.clip(a=data,   
                            a_max=1e8,
                            a_min=0
@@ -621,8 +624,9 @@ class TreeTrainer(Trainer):
 
         # randomly split leaves into test, train, and validation sets
         
-        for l in leaves:
-            leaf_bunch = l.indices
+        for leaf in leaves:
+
+            leaf_bunch = leaf.indices
 
             if len(leaf_bunch) == 1:
                 #x = random.random()
@@ -633,10 +637,13 @@ class TreeTrainer(Trainer):
                 train_indices.append([leaf_bunch[0]])
 
             else:
-                n_train, n_test = _validate_shuffle_split(
-                    len(leaf_bunch), test_size, train_size
-                )
+                #n_train, n_test = _validate_shuffle_split(
+                #    len(leaf_bunch), test_size, train_size
+                #)
 
+                n_train = len(leaf_bunch)
+                n_test = 0
+                
                 random_state = np.random.RandomState(seed=self.seed)
                 permutation = random_state.permutation(leaf_bunch)
                 test_indices.append(list(permutation[:n_test]))

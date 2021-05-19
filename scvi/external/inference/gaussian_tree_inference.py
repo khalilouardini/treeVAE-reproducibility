@@ -261,13 +261,57 @@ class GaussianTreePosterior(GaussianPosterior):
 
         # 3. Decode latent vector x* ~ p(x*|z = z*)
         p_m, p_v = self.model.decoder.forward(z_star)
-        data = Normal(p_m, p_v.sqrt()).sample((pp_averaging,)).cpu().numpy()
+        data = Normal(p_m, p_v.sqrt()).sample((100,)).cpu().numpy()
         data = np.mean(data, axis=0)
 
         if give_mean:
             return data, z_star, mu_star, nu_star
             
         return data, z_star
+
+    @torch.no_grad()
+    def mcmc_estimate(self,
+                        query_node,
+                        n_samples=50,
+                        known_latent_dist=None
+                        ):
+        """
+        :param self:
+        :param query_node: barcode of the query node node for which we want to perform missing value imputation
+        :param give_mean: bool: the mean of the NB distrbution if True
+        :param n_samples: number of MCMC samples
+        :return: the MCMC estimate of the variance and mean parameters of internal node 'query_node'. 
+        The estimate of the variance is computed with the law of total variance var(Y) = E[var(Y|X)] + var(E[Y|X])
+        """
+        mu_mcmc = 0
+        nu_mcmc = []
+        for i in range(n_samples):
+
+            # 1. sampling from posterior z ~ q(z|x) at the leaves
+            if known_latent_dist is not None:
+                mean, cov = known_latent_dist
+                z = np.random.multivariate_normal(mean=mean,
+                                                cov=cov).reshape(-1, self.model.n_latent)
+            else:
+                z = self.get_latent(give_mean=False)
+
+            # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
+            mu_star, _ = self.model.posterior_predictive_density(query_node=query_node,
+                                                                evidence=z)
+            
+            mu_mcmc += mu_star.cpu().numpy()
+            nu_mcmc.append(mu_star.cpu().numpy())
+        
+        # MCMC estimate of the mean
+        mu_mcmc /= n_samples
+
+        # total variance
+        nu_mcmc = np.var(nu_mcmc, axis=0)
+
+
+
+        return mu_mcmc, nu_mcmc
+
 
     @torch.no_grad()
     def empirical_qz_v(self, n_samples, norm):
