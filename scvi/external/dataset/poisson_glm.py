@@ -1,5 +1,7 @@
 import numpy as np
 from numpy.random import poisson, binomial
+from scipy.stats import nbinom
+from scipy.stats import gamma
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sys
@@ -10,8 +12,27 @@ sys.path.append('.')
 from ..utils.precision_matrix import precision_matrix
 
 
+def convert_params_NB(mu, alpha):
+    """ 
+    Convert mean/dispersion parameterization of a negative binomial to the ones scipy supports
+
+    Parameters
+    ----------
+    mu : float 
+       Mean of NB distribution.
+    alpha : float
+       Overdispersion parameter used for variance calculation.
+
+    See https://en.wikipedia.org/wiki/Negative_binomial_distribution#Alternative_formulations
+    """
+    var = mu + alpha * mu ** 2
+    r = mu ** 2 / (var - mu)
+    p = (var - mu) / var
+    
+    return r, 1-p
+
 class Poisson_GLM:
-    def __init__(self, tree, dim, latent, vis, only, branch_length):
+    def __init__(self, tree, dim, latent, vis, only, branch_length, alpha):
         """
         :param tree: path to a ete3 tree .txt file | or loaded ete3 tree object
         :param dim: desired number of genes
@@ -41,6 +62,8 @@ class Poisson_GLM:
         self.vis = vis
         self.leaves_only = only
         self.branch_length = branch_length
+
+        self.alpha = alpha
 
         leaves_covariance, full_covariance = precision_matrix(self.tree, self.latent, self.branch_length)
         if self.leaves_only:
@@ -84,7 +107,7 @@ class Poisson_GLM:
             plt.ylabel('y axis')
             plt.show()
 
-    def simulate_ge(self):
+    def simulate_ge(self, negative_binomial):
         # dimension of initial space (i.e number of genes)
         self.W = np.random.normal(loc=0, scale=0.5, size=(self.dim, self.latent))
         self.beta = np.random.normal(loc=0, scale=0.5, size=self.dim)
@@ -97,7 +120,14 @@ class Poisson_GLM:
                                  a_max=1e5
                           )
 
-        self.X = np.asarray(poisson(self.mu), dtype=np.float64)
+        if negative_binomial:
+            print('=== Negative Binomial simulations ===')
+            #g = gamma.rvs(self.alpha, scale=self.mu / self.alpha)
+            #self.X = np.asarray(poisson(g), dtype=np.float64)
+            r, p = convert_params_NB(mu=self.mu, alpha=self.alpha)
+            self.X = nbinom.rvs(n=r, p=p)
+        else:
+            self.X = np.asarray(poisson(self.mu), dtype=np.float64)
 
         if self.vis:
             ## Poissson distribution
@@ -141,7 +171,7 @@ class Poisson_GLM:
     def generate_new_ge(self, n_samples, leaves_idx):
         glm_samples = []
         for i in range(n_samples):
-            self.simulate_ge()
+            self.simulate_ge(False)
             glm_samples.append(np.take(self.X, leaves_idx, 0))
         #glm_samples = np.array(glm_samples)
         return glm_samples
@@ -150,6 +180,7 @@ class Poisson_GLM:
         glm_samples = []
         for i in range(n_samples):
             X = np.asarray(poisson(self.mu), dtype=np.float64)
+            X = binomial(X.astype(int), 0.1)
             glm_samples.append(np.take(X, leaves_idx, 0))
         #glm_samples = np.array(glm_samples)
         return glm_samples

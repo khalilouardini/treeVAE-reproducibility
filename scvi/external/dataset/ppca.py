@@ -340,13 +340,13 @@ class PPCA:
         predictive_mean_z, predictive_cov_z = {}, {}
         for n in self.internal_nodes:
             query_node = n.name
-            mu, nu = treevae.posterior_predictive_density(query_node=query_node,
+            mu, nu = treevae.posterior_predictive_density(query_node=n,
                                                             evidence=evidence     
                                                             )
             predictive_mean_z[n.name], predictive_cov_z[n.name] = mu, nu * np.identity(self.latent)
 
         return predictive_mean_z, predictive_cov_z
-
+        
 
     def compute_approx_posterior_predictive(self, iid=False, use_MP=False, sample_size=100):
 

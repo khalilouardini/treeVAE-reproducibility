@@ -12,7 +12,7 @@ from scipy.sparse import csr_matrix
 from ete3 import Tree
 import sys
 
-from scvi.dataset.dataset import (
+from ..dataset.dataset import (
     DownloadableDataset,
     GeneExpressionDataset,
     CellMeasurement,
