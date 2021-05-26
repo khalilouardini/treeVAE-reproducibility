@@ -188,6 +188,8 @@ class TreeVAE(nn.Module):
 
         # get list of neighbors that are not visited yet
         for node in incident_nodes:
+            if node.name == 'prior_root':
+                node = prior_node
             if not node.visited and (
                 node != prior_node or (node == prior_node and include_prior)
             ):
@@ -195,9 +197,6 @@ class TreeVAE(nn.Module):
                 incoming_messages.append(node)
 
         n = len(incoming_messages)
-
-        #import pdb
-        #pdb.set_trace()
 
         # collect and return
         if n == 0:

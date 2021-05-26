@@ -1,11 +1,5 @@
 import logging
 import random
-import sys
-import time
-
-from abc import abstractmethod
-from collections import defaultdict, OrderedDict
-from itertools import cycle
 
 import numpy as np
 import torch
@@ -21,11 +15,11 @@ from torch.utils.data import DataLoader
 
 from tqdm import trange
 
-from scvi.dataset.tree import TreeDataset
-from scvi.inference import Trainer
-from scvi.inference.posterior import Posterior
-from scvi.models.treevae import TreeVAE
-from torch.distributions import Poisson, Gamma, Bernoulli, Normal
+from ..dataset.tree import TreeDataset
+from ..inference.trainer import Trainer
+from ..inference.posterior import Posterior
+from ..models.treevae import TreeVAE
+from torch.distributions import Poisson, Gamma, Normal
 from ..models.distributions import NegativeBinomial
 
 
@@ -111,11 +105,11 @@ class TreePosterior(Posterior):
         self.data_loader = DataLoader(gene_dataset, **self.data_loader_kwargs)
 
     def elbo(self) -> float:
-        elbo = self.compute_elbo(self.model)
+        elbo = self.compute_elbo()
         logger.debug("ELBO : %.4f" % elbo)
         return elbo
 
-    def compute_elbo(self, vae, **kwargs):
+    def compute_elbo(self, **kwargs):
         """The ELBO is the reconstruction error + the likelihood of the
         Message Passing procedure on the tree. It differs from the marginal log likelihood.
 		Specifically, it is a lower bound on the marginal log likelihood
@@ -124,13 +118,11 @@ class TreePosterior(Posterior):
 		"""
 
         # Iterate once over the posterior and compute the elbo
-        print("computing elbo")
-
         lambda_ = 1
         elbo = 0
         for i_batch, tensors in enumerate(self):
             sample_batch, _, _, _, _ = tensors[:5]
-            reconst_loss, qz, mp_lik = vae.forward(sample_batch)
+            reconst_loss, qz, mp_lik = self.model.forward(sample_batch)
             elbo += torch.sum(reconst_loss)
             elbo += lambda_ * torch.sum(qz)
             if self.model.use_MP:
@@ -212,10 +204,7 @@ class TreePosterior(Posterior):
         for tensors in self.update({"batch_size": batch_size}):
             x, _, _, batch_index, labels = tensors
             with torch.no_grad():
-                outputs = self.model.inference(
-                    x,  batch_index=batch_index, y=labels, n_samples=n_samples
-                )
-
+                outputs = self.model.inference(x)
             rate = outputs["px_rate"]
             dispersion = outputs["px_r"]
 
@@ -268,7 +257,7 @@ class TreePosterior(Posterior):
         for tensors in self.update({"batch_size": len(self.barcodes)}):
             sample_batch, _, _, batch_index, labels = tensors
             outputs = self.model.inference(
-                sample_batch, batch_index=batch_index, y=labels, n_samples=n_samples
+                sample_batch
             )
             px_r = outputs["px_r"]
             px_rate = outputs["px_rate"]
@@ -281,7 +270,7 @@ class TreePosterior(Posterior):
                 dist = NegativeBinomial(mu=px_rate, theta=px_r)
             else:
                 raise ValueError("{} reconstruction error not handled right now".format(self.model.reconstruction_loss))
-            gene_expressions = dist.sample().permute([1, 2, 0])  # Shape : (n_cells_batch, n_genes, n_samples)
+            gene_expressions = dist.sample()#.permute([1, 2, 0])  # Shape : (n_cells_batch, n_genes, n_samples)
 
             x_old.append(sample_batch.cpu())
             x_new.append(gene_expressions.cpu())
@@ -426,11 +415,56 @@ class TreePosterior(Posterior):
                            a_min=0
                            )
         if give_mean:
-            return px_rate, data_z
+            return px_rate, data_z, mu_star, nu_star
 
         return data, data_z
 
+    @torch.no_grad()
+    def mcmc_estimate(self,
+                        query_node,
+                        n_samples=50,
+                        known_latent_dist=None
+                        ):
+        """
+        :param self:
+        :param query_node: barcode of the query node node for which we want to perform missing value imputation
+        :param give_mean: bool: the mean of the NB distrbution if True
+        :param n_samples: number of MCMC samples
+        :return: the MCMC estimate of the variance and mean parameters of internal node 'query_node'. 
+        The estimate of the variance is computed with the law of total variance var(Y) = E[var(Y|X)] + var(E[Y|X])
+        """
+        mu_mcmc = 0
+        nu_mcmc2 = []
+        nu_mcmc = 0
+        for i in range(n_samples):
 
+            # 1. sampling from posterior z ~ q(z|x) at the leaves
+            if known_latent_dist is not None:
+                mean, cov = known_latent_dist
+                z = np.random.multivariate_normal(mean=mean,
+                                                cov=cov).reshape(-1, self.model.n_latent)
+            else:
+                z = self.get_latent(give_mean=False)
+
+            # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
+            mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
+                                                                evidence=z)
+            
+            mu_mcmc += mu_star.cpu().numpy()
+
+            nu_mcmc += nu_star
+            nu_mcmc2.append(mu_star.cpu().numpy())
+
+        # MCMC estimate of the mean
+        mu_mcmc /= n_samples
+
+        # total variance
+        nu_mcmc /= n_samples
+        nu_mcmc += np.var(nu_mcmc2, axis=0)
+
+        return mu_mcmc, nu_mcmc
+
+        
     @torch.no_grad()
     def empirical_qz_v(self, n_samples, norm):
         """

@@ -1,21 +1,9 @@
 import logging
-import os
-import pickle
-import tarfile
-from typing import Tuple
-
 import numpy as np
-import pandas as pd
-import scipy.io as sp_io
-import shutil
-from scipy.sparse import csr_matrix
 from ete3 import Tree
-import sys
 
 from ..dataset.dataset import (
-    DownloadableDataset,
-    GeneExpressionDataset,
-    CellMeasurement,
+    GeneExpressionDataset
 )
 
 logger = logging.getLogger(__name__)

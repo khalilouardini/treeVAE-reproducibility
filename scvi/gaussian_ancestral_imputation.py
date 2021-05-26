@@ -6,9 +6,7 @@ import pandas as pd
 import argparse
 import copy
 import torch
-from sklearn.preprocessing import normalize
 from ete3 import Tree
-import matplotlib.pyplot as plt
 
 # Data
 from anndata import AnnData
@@ -27,9 +25,6 @@ from external.inference.gaussian_inference import GaussianTrainer
 from external.utils.data_util import get_leaves, get_internal
 from external.utils.metrics import error_latent, mean_posterior_lik, update_metrics, report_results, knn_purity
 from external.utils.baselines import avg_baseline_z, avg_weighted_baseline, construct_latent
-
-# Wandb
-import wandb
 
 
 class GaussianAncestralImputation():
@@ -348,7 +343,7 @@ if __name__ == '__main__':
                         help='Path of the Cassiopeia prior tree')
     parser.add_argument('--n_cells_tree', type=int, default=100, choices=[100, 250, 500],
                         help='number of leaves in simulations')
-    parser.add_argument('--fitness', type=str, default='no_fitness', choices=['no_fitness', 'low_fitness', 'high_fitness'],
+    parser.add_argument('--fitness', type=str, default='low_fitness', choices=['no_fitness', 'low_fitness', 'high_fitness'],
                     help='fitness regime of simulations')
     parser.add_argument('--fixed_branch_length', type=bool, default=False,
                         help='whether to use a fixed branch length in the simulations (Gaussian Random Walk)')
@@ -360,7 +355,7 @@ if __name__ == '__main__':
                         help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-2,
                         help='learning rate')
-    parser.add_argument('--lambda_', type=float, default=1.0,
+    parser.add_argument('--lambda_', type=float, default=2.0,
                         help='Regularization parameter in the treeVAE')
     parser.add_argument('--latent', type=int, default=5,
                         help='dimension of latent space')

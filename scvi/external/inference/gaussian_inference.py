@@ -1,8 +1,8 @@
 import sys
 import logging
 import matplotlib.pyplot as plt
-from inference import Trainer, UnsupervisedTrainer
-from inference.posterior import Posterior
+from ..inference.trainer import Trainer
+from ..inference.posterior import Posterior
 from ..models.gaussian_vae import GaussianVAE
 from ..dataset.tree import GeneExpressionDataset
 import torch

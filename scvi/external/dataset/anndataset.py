@@ -9,7 +9,7 @@ import pandas as pd
 import scipy.sparse as sp_sparse
 from typing import Dict, Optional
 
-from scvi.dataset.dataset import (
+from ..dataset.dataset import (
     DownloadableDataset,
     GeneExpressionDataset,
     CellMeasurement,

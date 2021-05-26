@@ -16,7 +16,7 @@ import pdb
 class TestMessagePassing(TestCase):
     def test_mp_inference(self):
         # Import Tree
-        type_test = 'general'
+        type_test = 'binary'
 
         if type_test == 'binary':
             tree = Tree()

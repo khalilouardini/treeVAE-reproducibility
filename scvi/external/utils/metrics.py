@@ -137,7 +137,35 @@ def mse(data, metric):
     results = pd.DataFrame.from_dict(data_dict, orient='index', columns=list(data.keys())[1:])
     return results
 
+def k_neighbors_graph(distance_matrix, K, include_self=True):
+    if include_self:
+        K = K - 1
+
+    n_nodes = distance_matrix.shape[0]
+    k_graph = np.zeros((n_nodes, n_nodes))
+
+    df_distance = pd.DataFrame(distance_matrix)
+
+    df_distance.columns = [str(n) for n in range(n_nodes)]
+    df_distance.index = [str(n) for n in range(n_nodes)]
+
+    df_distance = df_distance.T
+
+    for i in df_distance.index:
+        Y = df_distance.nsmallest(K, i)
+        Y = Y.T
+        Y = Y[Y.index.str.startswith(i)]
+        Y = Y.loc[:, Y.any()]
+
+        k = int(i)
+        for neighbor in list(Y.columns):
+            #print(i + ": ", list(Y.columns))
+            
+            l = int(neighbor)
+            k_graph[k, l] = 1
+        k_graph[k, k] = 1
     
+    return k_graph
 
 def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None):
     if do_normalize:
@@ -172,6 +200,41 @@ def knn_purity(max_neighbors, data, plot=True, do_normalize=True, save_fig=None)
             plt.savefig(save_fig)
 
     return scores
+
+def knn_purity_tree(distance_matrix, max_neighbors, data, plot=True, do_normalize=True, save_fig=None):
+    if do_normalize:
+        for method in data:
+            data[method] = normalize(data[method])
+    
+    n_neighbors = list(range(5, max_neighbors, 5))
+
+    scores = {}
+    for method in data:
+        query = data[method]
+        scores[method] = []
+        for k in n_neighbors:
+            # Compute groundtruth K-graph from the distance matrix of the tree
+            k_graph = k_neighbors_graph(distance_matrix, k, include_self=True) 
+            latent_graph = kneighbors_graph(query, k, mode='connectivity', include_self=True)
+            s = jaccard_score(k_graph.flatten(), latent_graph.toarray().flatten())
+            scores[method].append(s)
+        
+        if plot:
+            plt.plot(n_neighbors, scores[method], label=method, linestyle='dashed', linewidth=2, markersize=3, marker='+')
+
+    plt.xlabel('# neighbors'), plt.ylabel("purity"), plt.title("k-nn purity")
+    plt.legend()
+    plt.grid()
+
+    if plot:
+        plt.show()
+        if save_fig:
+            plt.savefig(save_fig)
+
+    return scores
+
+
+
 
 def knn_purity_stratified(n_neighbors, tree, data, min_depth=2, plot=True, do_normalize=True):
     if do_normalize:
@@ -342,17 +405,22 @@ def mean_posterior_lik(tree, predictive_mean_z, imputed_avg_z, imputed_mean_z, p
     return [vae_lik, treevae_lik]
 
 
-def report_results(metrics, save_path, columns2):
+def report_results(metrics, save_path, columns2, metastasis=False):
     columns1 = ["Method", "Spearman CC", "Pearson CC", "Kendall Tau"]
     columns2 = columns2
     columns3 = ["gaussian VAE", "gaussian treeVAE"]
+    columns4 = ["VAE", "treeVAE", "VAE full batch"]
     for metric, data in metrics.items():
             if metric.startswith('corr'):
                 df = pd.DataFrame(data, columns=columns1)
                 df.to_csv(os.path.join(save_path, metric))
-            elif (metric == 'MSE_var') or (metric == 'MSE_mean') or (metric == 'Likelihood') or (metric == 'Cross_Entropy'):
-                df = pd.DataFrame(data, columns=columns3)
-                df.to_csv(os.path.join(save_path, metric))
+            elif (metric == 'MSE_var') or (metric == 'MSE_mean') or (metric == 'Likelihood') or (metric == 'Cross_Entropy') or (metric == 'ELBO'):
+                if not metastasis:
+                    df = pd.DataFrame(data, columns=columns3)
+                    df.to_csv(os.path.join(save_path, metric))
+                else:
+                    df = pd.DataFrame(data, columns=columns4)
+                    df.to_csv(os.path.join(save_path, metric))
             else:
                 df = pd.DataFrame(data, columns=columns2)
                 df.to_csv(os.path.join(save_path, metric))

@@ -1,14 +1,11 @@
 import os
-import sys
 import numpy as np
 import random
 import pandas as pd
 import argparse
 import copy
 import torch
-from sklearn.preprocessing import normalize
 from ete3 import Tree
-import matplotlib.pyplot as plt
 
 # Data
 from anndata import AnnData
@@ -19,10 +16,9 @@ from external.dataset.anndataset import AnnDatasetFromAnnData
 
 # Models
 from external.models.treevae import TreeVAE
-from external.inference.tree_inference import TreeTrainer, TreePosterior
-from models.vae import VAE
-from inference.inference import UnsupervisedTrainer
-from inference import posterior
+from external.inference.tree_inference import TreeTrainer
+from external.models.vae import VAE
+from external.inference.inference import UnsupervisedTrainer
 
 # Utils
 from external.utils.data_util import get_leaves, get_internal
@@ -34,6 +30,7 @@ class Ancestral_Imputation():
     def __init__(self,
                 tree,
                 fixed_branch_length,
+                t_norm,
                 binomial_thinning,
                 use_cuda,
                 n_epochs,
@@ -63,7 +60,7 @@ class Ancestral_Imputation():
         self.lambda_ = lambda_
         self.latent = latent
         self.n_genes = n_genes
-        self.bin_thin = bin_thin
+        self.bin_thin = binomial_thinning
 
         #data
         self.glm = None
@@ -89,7 +86,7 @@ class Ancestral_Imputation():
                 if n.is_root():
                     self.branch_length[n.name] = 0.0
                 else:
-                    self.branch_length[n.name] = n.dist
+                    self.branch_length[n.name] = t_norm * n.dist
             self.branch_length['prior_root'] = 1.0
 
 
@@ -165,7 +162,7 @@ class Ancestral_Imputation():
         )
 
         # training the VAE
-        tree_trainer.train(n_epochs=self.n_epochs+300,
+        tree_trainer.train(n_epochs=self.n_epochs+100,
                       lr=self.lr
                       )
 
@@ -314,6 +311,8 @@ if __name__ == '__main__':
                     help='fitness regime of simulations')
     parser.add_argument('--fixed_branch_length', type=bool, default=False,
                         help='whether to use a fixed branch length in the simulations (Gaussian Random Walk)')
+    parser.add_argument('--t_norm', type=float, default=1,
+                        help='branch length normalization parameter')
     parser.add_argument('--binomial_thinning', type=float, default=0.1,
                     help='proportion of binomial thinning in the Poisson simulations')
     parser.add_argument('--use_cuda', type=bool, default=True,
@@ -332,7 +331,7 @@ if __name__ == '__main__':
                         help='Simulation framework')
     parser.add_argument('--n_hidden', type=int, default=128,
                         help='Number hidden units in the VAE')
-    parser.add_argument('--seed', type=int, default=42,
+    parser.add_argument('--seed', type=int, default=0,
                         help='random_seed')
     parser.add_argument('--n_epochs_kl_warmup', type=int, default=150,
                         help='Number of warm up epochs before introducing KL regularization in the VAE')
@@ -347,6 +346,7 @@ if __name__ == '__main__':
     n_cells_tree = args.n_cells_tree
     fitness = args.fitness
     fixed_branch_length = args.fixed_branch_length
+    t_norm = args.t_norm
     bin_thin = args.binomial_thinning
     use_cuda = args.use_cuda
     n_epochs = args.n_epochs
@@ -363,9 +363,9 @@ if __name__ == '__main__':
 
     print("==== Loading trees ====")
     print("Collection of trees with {} leaves, and {} regime".format(n_cells_tree, fitness))
-    tree_folder = '/home/eecs/khalil.ouardini/cas_scvi_topologies/newick_objects'
-    tree_folder = os.path.join(tree_folder, str(n_cells_tree)+'cells')
-    tree_folder = os.path.join(tree_folder, fitness)
+    tree_folder = '/home/eecs/khalil.ouardini/cas_scvi_topologies/newick_objects/test'
+    #tree_folder = os.path.join(tree_folder, str(n_cells_tree)+'cells')
+    #tree_folder = os.path.join(tree_folder, fitness)
     tree_paths = [os.path.join(tree_folder, f) for f in os.listdir(tree_folder)]
 
     metrics = {'correlations_ss': [], 'correlations_gg': [], 'MSE': [], 'L1': [], 'Cross_Entropy': []}
@@ -379,6 +379,7 @@ if __name__ == '__main__':
         exp = Ancestral_Imputation(
                                 tree=tree,
                                 fixed_branch_length=fixed_branch_length,
+                                t_norm=t_norm,
                                 binomial_thinning=bin_thin, 
                                 use_cuda=use_cuda, 
                                 n_epochs=n_epochs, 

@@ -242,7 +242,8 @@ def scvi_baseline_z(tree,
                     library_size=10000,
                     use_cuda=False,
                     known_latent=False,
-                    latent=None):
+                    latent=None
+                   ):
     """
     :param tree: ete3 phylogenetic tree
     :param posterior: scVI posterior object

@@ -16,7 +16,7 @@ import seaborn as sns
 import pandas as pd
 from sklearn.preprocessing import normalize
 
-def plot_histograms(X, title):
+def plot_histograms(X, title, save_path=None):
     fig, axes = plt.subplots(1, 1,
                              figsize=(14, 8),
                              sharey=True,
@@ -46,6 +46,10 @@ def plot_histograms(X, title):
     plt.xlabel('Gene Expression value')
     plt.legend(['gene_' + str(i) for i in list(range(20))], loc='best')
     plt.show()
+
+    if save_path is not None:
+        plt.savefig(save_path)
+
 
 def plot_embedding(X, color_index, sizes):
     reducer = umap.UMAP()
@@ -489,8 +493,6 @@ def plot_contour_dist(z, c):
         l.set_linestyle('--')
         l.set_color('black')
     plt.title("Simulated Latent Space")
-
-
 
 
 

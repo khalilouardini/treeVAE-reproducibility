@@ -1,17 +1,10 @@
 import logging
 import random
-import sys
-import time
-
-from abc import abstractmethod
-from collections import defaultdict, OrderedDict
-from itertools import cycle
 
 import numpy as np
 import torch
 import torch.distributions as distributions
 
-import copy
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection._split import _validate_shuffle_split
@@ -19,10 +12,8 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import DataLoader
 
-from tqdm import trange
-
 from ..dataset.tree import TreeDataset
-from scvi.inference import Trainer
+from ..inference.trainer import Trainer
 from ..inference.gaussian_inference import GaussianPosterior
 from ..models.gaussian_treevae import GaussianTreeVAE
 from torch.distributions import Normal
@@ -284,7 +275,8 @@ class GaussianTreePosterior(GaussianPosterior):
         The estimate of the variance is computed with the law of total variance var(Y) = E[var(Y|X)] + var(E[Y|X])
         """
         mu_mcmc = 0
-        nu_mcmc = []
+        nu_mcmc2 = []
+        nu_mcmc = 0
         for i in range(n_samples):
 
             # 1. sampling from posterior z ~ q(z|x) at the leaves
@@ -296,19 +288,19 @@ class GaussianTreePosterior(GaussianPosterior):
                 z = self.get_latent(give_mean=False)
 
             # 2. Message passing & sampling from multivariate normal z* ~ p(z*|z)
-            mu_star, _ = self.model.posterior_predictive_density(query_node=query_node,
+            mu_star, nu_star = self.model.posterior_predictive_density(query_node=query_node,
                                                                 evidence=z)
             
             mu_mcmc += mu_star.cpu().numpy()
-            nu_mcmc.append(mu_star.cpu().numpy())
-        
+            nu_mcmc2.append(mu_star.cpu().numpy())
+
+            nu_mcmc += nu_star
         # MCMC estimate of the mean
         mu_mcmc /= n_samples
 
         # total variance
-        nu_mcmc = np.var(nu_mcmc, axis=0)
-
-
+        nu_mcmc /= n_samples
+        nu_mcmc += np.var(nu_mcmc2, axis=0)
 
         return mu_mcmc, nu_mcmc
 
