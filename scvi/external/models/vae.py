@@ -17,7 +17,7 @@ import sys
 sys.path.append("..")
 
 from ..models.modules_scvi import Encoder, DecoderSCVI, LinearDecoderSCVI
-from scvi.models.utils import one_hot
+from .utils import one_hot
 
 from typing import Tuple, Dict
 
