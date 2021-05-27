@@ -314,9 +314,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_runs', type=int, default=10,
                         help='# of runs')
-    parser.add_argument('--tree_name', type=str, default='/home/eecs/khalil.ouardini/cas_scvi_topologies/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree',
+    parser.add_argument('--tree_name', type=str, default='data/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree',
                         help='Path of the Cassiopeia prior tree')
-    parser.add_argument('--data_path', type=str, default='/home/eecs/khalil.ouardini/Cassiopeia_Transcriptome/scvi/metastasis_data/Metastasis_lg7_100g.npy',
+    parser.add_argument('--data_path', type=str, default='data/metastasis_data/Metastasis_lg7_100g.npy',
                     help='Path to the pickled gene expression metastasis data matrix')
     parser.add_argument('--fixed_branch_length', type=bool, default=False,
                         help='whether to use a fixed branch length in the simulations (Gaussian Random Walk)')

@@ -303,7 +303,7 @@ class Ancestral_Imputation():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--tree_name', type=str, default='/Users/khalilouardini/Desktop/projects/scVI/scvi/data/Cassiopeia_trees/lg7_tree_hybrid_priors.alleleThresh.collapsed.txt',
+    parser.add_argument('--tree_name', type=str,
                         help='Path of the Cassiopeia prior tree')
     parser.add_argument('--n_cells_tree', type=int, default=500, choices=[100, 250, 500],
                         help='number of leaves in simulations')
@@ -363,9 +363,9 @@ if __name__ == '__main__':
 
     print("==== Loading trees ====")
     print("Collection of trees with {} leaves, and {} regime".format(n_cells_tree, fitness))
-    tree_folder = '/home/eecs/khalil.ouardini/cas_scvi_topologies/newick_objects/test'
-    #tree_folder = os.path.join(tree_folder, str(n_cells_tree)+'cells')
-    #tree_folder = os.path.join(tree_folder, fitness)
+    tree_folder = 'data/topologies/newick_objects'
+    tree_folder = os.path.join(tree_folder, str(n_cells_tree)+'cells')
+    tree_folder = os.path.join(tree_folder, fitness)
     tree_paths = [os.path.join(tree_folder, f) for f in os.listdir(tree_folder)]
 
     metrics = {'correlations_ss': [], 'correlations_gg': [], 'MSE': [], 'L1': [], 'Cross_Entropy': []}
