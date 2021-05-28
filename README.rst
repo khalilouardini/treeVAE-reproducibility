@@ -4,10 +4,10 @@ treeVAE-Reproducibility
 
 Reproducing results in the "Reconstructing unobserved cellular states from  paired single-cell lineage tracing and transcriptomics data" paper.
 
-## Contact
+# Contact
 ouardini.k@gmail.com
 
-## Datasets
+# Datasets
 + Gaussian process factor analysis (GPFA)
 
 - The simulated tree topologies used in the GPFA experiments are stored in 'scvi/data/topologies/100cells'.
@@ -23,14 +23,14 @@ ouardini.k@gmail.com
 - The tree toplogy fot the cancer metastasis dataset is stored in 'scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree'
 - The gene expression data (603 cells, 100 genes) is stored in 'scvi/data/metastasis/Metastasis_lg7_100g.npy'
 
-## System requirements
+# System requirements
 + Python 3
 + Pytorch
 
-## Installation guide
+# Installation guide
 + Clone the github repository, install the dependencies in 'requirements.txt'.
 
-## Instructions to reproduce experiments
+# Instructions to reproduce experiments
 + for the GPFA experiments, run 'python3 gaussian_ancestral_imputation.py'
 + for the GPPLN experiments, run 'python3 ancestral_imputation.py'
 + for the metastasis data analysis, symply follow instructions in the notebook 'scvi/external/notebooks/Metastasis.ipynb'
