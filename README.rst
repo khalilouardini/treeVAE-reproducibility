@@ -7,13 +7,8 @@ Reproducing results in the "Reconstructing unobserved cellular states from  pair
 # Contact
 ouardini.k@gmail.com
 
-<<<<<<< HEAD
-## Datasets
-1. Gaussian process factor analysis (GPFA)
-=======
 # Datasets
-+ Gaussian process factor analysis (GPFA)
->>>>>>> fed7a001621d86f5778eba2fe897989094294c8f
+1. Gaussian process factor analysis (GPFA)
 
     * The simulated tree topologies used in the GPFA experiments are stored in 'scvi/data/topologies/100cells'.
     * The code for the simulations is in 'scvi/dataset/ppca.py'.
@@ -29,15 +24,15 @@ ouardini.k@gmail.com
     * The gene expression data (603 cells, 100 genes) is stored in 'scvi/data/metastasis/Metastasis_lg7_100g.npy'
 
 # System requirements
-+ Python 3
-+ Pytorch
+    + Python 3
+    + Pytorch
 
 # Installation guide
-+ Clone the github repository, install the dependencies in 'requirements.txt'.
+    + Clone the github repository, install the dependencies in 'requirements.txt'.
 
 # Instructions to reproduce experiments
-+ for the GPFA experiments, run 'python3 gaussian_ancestral_imputation.py'
-+ for the GPPLN experiments, run 'python3 ancestral_imputation.py'
+    + for the GPFA experiments, run 'python3 gaussian_ancestral_imputation.py'
+    + for the GPPLN experiments, run 'python3 ancestral_imputation.py'
 + for the metastasis data analysis, symply follow instructions in the notebook 'scvi/external/notebooks/Metastasis.ipynb'
 
 At the end of each, the raw results will be stored in 'csv' format in a 'results/' folder, with sub-directories automatically created in reference
