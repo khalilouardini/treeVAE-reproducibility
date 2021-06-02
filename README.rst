@@ -8,20 +8,20 @@ Reproducing results in the "Reconstructing unobserved cellular states from  pair
 ouardini.k@gmail.com
 
 ## Datasets
-+ Gaussian process factor analysis (GPFA)
+1. Gaussian process factor analysis (GPFA)
 
-- The simulated tree topologies used in the GPFA experiments are stored in 'scvi/data/topologies/100cells'.
-- The code for the simulations is in 'scvi/dataset/ppca.py'.
+    * The simulated tree topologies used in the GPFA experiments are stored in 'scvi/data/topologies/100cells'.
+    * The code for the simulations is in 'scvi/dataset/ppca.py'.
 
-+ Gaussion process Poisson Log Normal (GPPLN)
+2. Gaussion process Poisson Log Normal (GPPLN)
 
-- The simulated tree topologies used in the GPPLN experiments are stored in 'scvi/data/topologies/500cells'.
-- The code for the simulations is in 'scvi/dataset/poisson_glm.py'.
+    * The simulated tree topologies used in the GPPLN experiments are stored in 'scvi/data/topologies/500cells'.
+    * The code for the simulations is in 'scvi/dataset/poisson_glm.py'.
 
-+ Metastasis 
+3. Metastasis 
 
-- The tree toplogy fot the cancer metastasis dataset is stored in 'scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree'
-- The gene expression data (603 cells, 100 genes) is stored in 'scvi/data/metastasis/Metastasis_lg7_100g.npy'
+    * The tree toplogy fot the cancer metastasis dataset is stored in 'scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree'
+    * The gene expression data (603 cells, 100 genes) is stored in 'scvi/data/metastasis/Metastasis_lg7_100g.npy'
 
 ## System requirements
 + Python 3

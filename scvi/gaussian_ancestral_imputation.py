@@ -470,6 +470,8 @@ if __name__ == '__main__':
         purity_internal = purity_internal.append(df_purity_internal)
         purity_full = purity_full.append(df_purity_full)
 
+    if not os.path.exists('results'):
+        os.mkdir('results')
     results_dir = 'results/gaussian'
     if not os.path.exists(results_dir):
         os.mkdir(results_dir)
