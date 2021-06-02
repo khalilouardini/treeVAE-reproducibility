@@ -5,9 +5,11 @@ treeVAE-Reproducibility
 Reproducing results in the "Reconstructing unobserved cellular states from  paired single-cell lineage tracing and transcriptomics data" paper.
 
 # Contact
+
 ouardini.k@gmail.com
 
 # Datasets
+
 1. Gaussian process factor analysis (GPFA)
 
     * The simulated tree topologies used in the GPFA experiments are stored in 'scvi/data/topologies/100cells'.
@@ -35,7 +37,7 @@ ouardini.k@gmail.com
     + for the GPPLN experiments, run 'python3 ancestral_imputation.py'
 + for the metastasis data analysis, symply follow instructions in the notebook 'scvi/external/notebooks/Metastasis.ipynb'
 
-At the end of each, the raw results will be stored in 'csv' format in a 'results/' folder, with sub-directories automatically created in reference
+At the end of each run, the raw results will be stored in *csv* format in a *results/* folder, with sub-directories automatically created in reference
 to the hyperparameters used in each experiment. to reproduce the tables and figures of the paper, simply follow the instructions
-in 'scvi/external/notebooks/plot_results.ipynb'
+in *scvi/external/notebooks/plot_results.ipynb*.
 
