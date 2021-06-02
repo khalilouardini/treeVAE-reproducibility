@@ -396,7 +396,7 @@ if __name__ == '__main__':
     print("Collection of trees with {} leaves, and {} regime".format(n_cells_tree, fitness))
     tree_folder = 'data/topologies/newick_objects'
     tree_folder = os.path.join(tree_folder, str(n_cells_tree)+'cells')
-    tree_folder = os.path.join(tree_folder, fitness)
+    #tree_folder = os.path.join(tree_folder, fitness)
     tree_paths = [os.path.join(tree_folder, f) for f in os.listdir(tree_folder)]
 
     metrics = {'correlations_ss': [], 'correlations_gg': [],
