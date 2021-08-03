@@ -2,12 +2,12 @@
 treeVAE-Reproducibility
 ========================================
 
-Reproducing results in the "Reconstructing unobserved cellular states from  paired single-cell lineage tracing and transcriptomics data" [paper](https://www.biorxiv.org/content/10.1101/2021.05.28.446021v1?fbclid=IwAR17_FzhH-SyeU3LE-JyohwntDvAfnPP-s0qkHxATDE0CRfVs-MJ3zVipnE) , accepted at the ICML 2021 Workshop on Computational Biology. 
+Reproducing results in the "Reconstructing unobserved cellular states from  paired single-cell lineage tracing and transcriptomics data" [paper](https://www.biorxiv.org/content/10.1101/2021.05.28.446021v1?fbclid=IwAR17_FzhH-SyeU3LE-JyohwntDvAfnPP-s0qkHxATDE0CRfVs-MJ3zVipnE) ,  accepted at the ICML 2021 Workshop on Computational Biology. 
 
 Contact
 ======
 
-ouardini.k@gmail.com
+ouardini.k@gmail.com [google](google.com)
 
 Datasets
 ======
