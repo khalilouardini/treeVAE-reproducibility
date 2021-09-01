@@ -40,7 +40,7 @@ Instructions to reproduce experiments
 ======
     + for the GPFA experiments, run 'python3 gaussian_ancestral_imputation.py'
     + for the GPPLN experiments, run 'python3 ancestral_imputation.py'
-+ for the metastasis data analysis, symply follow instructions in the notebook 'scvi/external/notebooks/Metastasis.ipynb'
+    + for the metastasis data analysis, symply follow instructions in the notebook 'scvi/external/notebooks/Metastasis.ipynb'
 
 At the end of each run, the raw results will be stored in *csv* format in a *results/* folder, with sub-directories automatically created in reference
 to the hyperparameters used in each experiment. to reproduce the tables and figures of the paper, simply follow the instructions
