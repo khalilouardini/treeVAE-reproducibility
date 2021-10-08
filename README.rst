@@ -4,7 +4,8 @@ treeVAE-Reproducibility
 
 Reproducing results in the "Reconstructing unobserved cellular states from  paired single-cell lineage tracing and transcriptomics data" paper,  accepted at the ICML 2021 Workshop on Computational Biology. 
 
-![treeVAE poster](https://github.com/khalilouardini/treeVAE-reproducibility/blob/master/WCB2021_treevae_poster-1.png)
+![treeVAE poster]
+(https://github.com/khalilouardini/treeVAE-reproducibility/blob/master/WCB2021_treevae_poster-1.png)
 
 Contact
 ======
