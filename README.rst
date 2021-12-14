@@ -13,19 +13,19 @@ ouardini.k@gmail.com
 Datasets
 ======
 
-1. Gaussian process factor analysis (GPFA)
+1. Gaussian Process Factor Analysis (GPFA)
 
     - The simulated tree topologies used in the GPFA experiments are stored in `scvi/data/topologies/100cells`.
     - The code for the simulations is in `scvi/dataset/ppca.py`.
 
-2. Gaussion process Poisson Log Normal (GPPLN)
+2. Gaussian Process Poisson Log Normal (GPPLN)
 
     * The simulated tree topologies used in the GPPLN experiments are stored in `scvi/data/topologies/500cells`.
     * The code for the simulations is in `scvi/dataset/poisson_glm.py`.
 
 3. Metastasis 
 
-    * The tree toplogy fot the cancer metastasis dataset is stored in 'scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree'
+    * The tree toplogy fot the cancer metastasis dataset is stored in `scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree`
     * The gene expression data (603 cells, 100 genes) is stored in `scvi/data/metastasis/Metastasis_lg7_100g.npy`
 
 System requirements
@@ -35,7 +35,7 @@ System requirements
 
 Installation guide
 ======
-    + Clone the github repository, install the dependencies `pip install -r requirements.txt`.
+    + Clone the github repository, create an environment and install the dependencies: `pip install -r requirements.txt`.
 
 Instructions to reproduce experiments
 ======
