@@ -15,8 +15,8 @@ Datasets
 
 1. Gaussian process factor analysis (GPFA)
 
-    * The simulated tree topologies used in the GPFA experiments are stored in `scvi/data/topologies/100cells`.
-    * The code for the simulations is in `scvi/dataset/ppca.py`.
+    - The simulated tree topologies used in the GPFA experiments are stored in `scvi/data/topologies/100cells`.
+    - The code for the simulations is in `scvi/dataset/ppca.py`.
 
 2. Gaussion process Poisson Log Normal (GPPLN)
 
