@@ -20,13 +20,13 @@ Datasets
 
 2. Gaussian Process Poisson Log Normal (GPPLN)
 
-    * The simulated tree topologies used in the GPPLN experiments are stored in `scvi/data/topologies/500cells`.
-    * The code for the simulations is in `scvi/dataset/poisson_glm.py`.
+    - The simulated tree topologies used in the GPPLN experiments are stored in `scvi/data/topologies/500cells`.
+    - The code for the simulations is in `scvi/dataset/poisson_glm.py`.
 
 3. Metastasis 
 
-    * The tree toplogy fot the cancer metastasis dataset is stored in `scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree`
-    * The gene expression data (603 cells, 100 genes) is stored in `scvi/data/metastasis/Metastasis_lg7_100g.npy`
+    - The tree toplogy fot the cancer metastasis dataset is stored in `scvi/data/metastasis/lg7_tree_hybrid_priors.alleleThresh.processed.ultrametric.annotated.tree`
+    - The gene expression data (603 cells, 100 genes) is stored in `scvi/data/metastasis/Metastasis_lg7_100g.npy` .
 
 System requirements
 ======
@@ -41,9 +41,9 @@ Instructions to reproduce experiments
 ======
     + for the GPFA experiments, run `python3 gaussian_ancestral_imputation.py`
     + for the GPPLN experiments, run `python3 ancestral_imputation.py`
-    + for the metastasis data analysis, symply follow instructions in the notebook `scvi/external/notebooks/Metastasis.ipynb
+    + for the metastasis data analysis, symply follow instructions in the notebook `scvi/external/notebooks/Metastasis.ipynb`
 
 At the end of each run, the raw results will be stored in *csv* format in a *results/* folder, with sub-directories automatically created in reference
 to the hyperparameters used in each experiment. to reproduce the tables and figures of the paper, simply follow the instructions
-in *scvi/external/notebooks/plot_results.ipynb*.
+in `scvi/external/notebooks/plot_results.ipynb`.
 
